@@ -182,6 +182,12 @@ export const localAdapter: DataAdapter = {
    *   未承認 : 全職員・全期間
    * ログイン中の職員と表示中の職員は、サ責が他職員を表示したときに食い違う。
    */
+  async deleteRecord(visitId: string): Promise<void> {
+    const { records, unreadableRaw } = readRecords();
+    // 読めない記録は消さずに持ち越す。法定文書は読めないからといって捨てられない
+    writeRaw(KEY.records, [...records.filter((r) => r.visitId !== visitId), ...unreadableRaw]);
+  },
+
   async getBadgeCounts(sessionStaffId: string): Promise<BadgeCounts> {
     const { records } = readRecords();
     const today = iso(new Date());

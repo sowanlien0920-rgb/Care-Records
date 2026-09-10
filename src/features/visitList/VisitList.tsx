@@ -19,7 +19,7 @@ import { VisitRow } from './VisitRow';
 export function VisitList() {
   const {
     dispatch, records, filter, retry, notify,
-    stampStartAt, stampEndAt, approveVisit, approveAllToday, session,
+    stampStartAt, stampEndAt, approveVisit, approveAllToday, session, openRecord,
   } = useCareStore();
 
   const loading = dispatch.status === 'loading' || records.status === 'loading';
@@ -94,7 +94,7 @@ export function VisitList() {
             onStart={() => { void stampStartAt(v.visitId); }}
             onEnd={() => { void stampEndAt(v.visitId); }}
             onApprove={() => { void approveVisit(v.visitId); }}
-            onEdit={later('記録画面')}
+            onEdit={() => openRecord(v.visitId)}
           />
         ))}
       </div>

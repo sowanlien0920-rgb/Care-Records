@@ -12,6 +12,8 @@ import { DateBar } from './features/shell/DateBar';
 import { Toolbar } from './features/shell/Toolbar';
 import { Stats } from './features/shell/Stats';
 import { VisitList } from './features/visitList/VisitList';
+import { RecordModal } from './features/record/RecordModal';
+import { ResidentModal } from './features/resident/ResidentModal';
 
 function Shell() {
   const { session, notification } = useCareStore();
@@ -28,7 +30,10 @@ function Shell() {
 
         <VisitList />
       </div>
-      {notification !== null && <div className="toast on">{notification}</div>}
+      <RecordModal />
+      <ResidentModal />
+      {/* 通知は live region にする。トーストだけだと読み上げに乗らない */}
+      {notification !== null && <div className="toast on" role="status" aria-live="polite">{notification}</div>}
     </>
   );
 }

@@ -5,7 +5,7 @@
 import { createContext } from 'react';
 import type { AdapterError, BadgeCounts, RecordListing } from '../data/adapter';
 import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
-import type { StaffAccount } from '../types/local';
+import type { RecordPrefs, StaffAccount } from '../types/local';
 
 /**
  * 非同期の4状態を型で表す。
@@ -46,6 +46,21 @@ export interface CareStore {
   filter: VisitStatus | 'all';
   setFilter: (filter: VisitStatus | 'all') => void;
 
+  /** 記録画面を開いている訪問。legacy の cur.editId にあたる */
+  editingVisitId: string | null;
+  openRecord: (visitId: string) => void;
+  closeRecord: () => void;
+
+  /**
+   * 利用者マスタの開閉と、選択中の利用者。
+   * 「開いているが利用者未指定（先頭を選ぶ）」を表せるよう、開閉と選択を分けている。
+   */
+  residentModalOpen: boolean;
+  selectedResidentId: string | null;
+  /** null を渡すと開いたうえで先頭の利用者を選ぶ */
+  openResident: (residentId: string | null) => void;
+  closeResident: () => void;
+
   // ── サーバーデータ ────────────────────────────────────
   staff: Async<StaffAccount[]>;
   dispatch: Async<Dispatch | null>;
@@ -56,6 +71,11 @@ export interface CareStore {
 
   // ── 操作 ──────────────────────────────────────────────
   saveRecord: (record: VisitRecord) => Promise<boolean>;
+  /** 実施記録を削除する。配信（予定）は消えない */
+  deleteRecord: (visitId: string) => Promise<boolean>;
+  /** 記録支援設定の読み書き。法定文書系は kpi-react が正なのでここには含めない */
+  getPrefs: (residentId: string) => Promise<RecordPrefs>;
+  savePrefs: (residentId: string, prefs: RecordPrefs) => Promise<boolean>;
   /** 開始を打刻する。予定終了を過ぎていたら打刻せずメッセージだけ返す */
   stampStartAt: (visitId: string) => Promise<void>;
   /** 終了を打刻する。状態が「済」になる */

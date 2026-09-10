@@ -20,7 +20,7 @@ import { localAdapter } from '../data/localAdapter';
 import { iso } from '../utils/date';
 import { newRecordFor, recordOf } from '../domain/visitStatus';
 import { stampEnd, stampStart } from '../domain/timeValidation';
-import { canApprove } from '../types/local';
+import { canApprove, type RecordPrefs } from '../types/local';
 import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
 import type { StaffAccount } from '../types/local';
 
@@ -54,6 +54,9 @@ export function CareStoreProvider({
   const [session, setSession] = useState<StaffAccount | null>(null);
   const [staffId, setStaffId] = useState<string | null>(null);
   const [filter, setFilter] = useState<VisitStatus | 'all'>('all');
+  const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
+  const [residentModalOpen, setResidentModalOpen] = useState(false);
+  const [selectedResidentId, setSelectedResidentId] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   const [staffKeyed, setStaffKeyed] = useState<Keyed<StaffAccount[]> | null>(null);
@@ -228,6 +231,37 @@ export function CareStoreProvider({
     notify('承認しました（完了）');
   }, [mutateRecord, session, notify]);
 
+  const deleteRecord = useCallback(async (visitId: string): Promise<boolean> => {
+    try {
+      await adapter.deleteRecord(visitId);
+    } catch (e) {
+      notify(e instanceof AdapterError ? e.userMessage : '削除に失敗しました。');
+      return false;
+    }
+    setReloadToken((n) => n + 1);
+    return true;
+  }, [adapter, notify]);
+
+  const getPrefs = useCallback((residentId: string) => adapter.getPrefs(residentId), [adapter]);
+
+  const savePrefs = useCallback(async (residentId: string, prefs: RecordPrefs): Promise<boolean> => {
+    try {
+      await adapter.savePrefs(residentId, prefs);
+      return true;
+    } catch (e) {
+      notify(e instanceof AdapterError ? e.userMessage : '保存に失敗しました。');
+      return false;
+    }
+  }, [adapter, notify]);
+
+  const openRecord = useCallback((visitId: string) => setEditingVisitId(visitId), []);
+  const closeRecord = useCallback(() => setEditingVisitId(null), []);
+  const openResident = useCallback((residentId: string | null) => {
+    setSelectedResidentId(residentId);
+    setResidentModalOpen(true);
+  }, []);
+  const closeResident = useCallback(() => setResidentModalOpen(false), []);
+
   const approveAllToday = useCallback(async () => {
     const me = session;
     if (!canApprove(me)) { notify('承認権限がありません。'); return; }
@@ -256,12 +290,18 @@ export function CareStoreProvider({
     session, signIn, signOut,
     staffId, setStaffId,
     filter, setFilter,
+    editingVisitId, openRecord, closeRecord,
+    residentModalOpen, selectedResidentId, openResident, closeResident,
     staff, dispatch, records, badges,
-    saveRecord, stampStartAt, stampEndAt, approveVisit, approveAllToday,
+    saveRecord, deleteRecord, getPrefs, savePrefs,
+    stampStartAt, stampEndAt, approveVisit, approveAllToday,
     retry,
     notification, notify,
-  }), [date, session, signIn, signOut, staffId, filter, staff, dispatch, records, badges,
-       saveRecord, stampStartAt, stampEndAt, approveVisit, approveAllToday,
+  }), [date, session, signIn, signOut, staffId, filter,
+       editingVisitId, openRecord, closeRecord, residentModalOpen, selectedResidentId, openResident, closeResident,
+       staff, dispatch, records, badges,
+       saveRecord, deleteRecord, getPrefs, savePrefs,
+       stampStartAt, stampEndAt, approveVisit, approveAllToday,
        retry, notification, notify]);
 
   return <CareStoreContext.Provider value={value}>{children}</CareStoreContext.Provider>;

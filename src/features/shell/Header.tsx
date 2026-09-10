@@ -28,7 +28,7 @@ function useClock(): string {
 }
 
 export function Header() {
-  const { session, staffId, setStaffId, staff, signOut, notify } = useCareStore();
+  const { session, staffId, setStaffId, staff, signOut, notify, openResident } = useCareStore();
   const clock = useClock();
 
   const accounts = staff.status === 'ready' ? staff.data : [];
@@ -72,7 +72,7 @@ export function Header() {
           onClick={() => notify('職員アカウント管理はステップ6以降で実装します')}>👥</button>
       )}
       <button className="gear" id="usrBtn" title="利用者マスタ"
-        onClick={() => notify('利用者マスタはステップ5で実装します')}>👤</button>
+        onClick={() => openResident(null)}>👤</button>
       {mgr && (
         <button className="gear" id="cfgBtn" title="設定"
           onClick={() => notify('設定はステップ6以降で実装します')}>⚙</button>

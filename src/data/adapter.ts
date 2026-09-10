@@ -84,6 +84,11 @@ export interface DataAdapter {
    */
   listRecords(date: string, staffId?: string): Promise<RecordListing>;
   saveRecord(record: VisitRecord): Promise<void>;
+  /**
+   * 実施記録を削除する。配信（予定）は kpi-react のものなので消えない。
+   * 消えるのは carerecords が書いた記録だけになる。
+   */
+  deleteRecord(visitId: string): Promise<void>;
 
   /**
    * バッジ件数。sessionStaffId は「ログイン中の職員」であり、

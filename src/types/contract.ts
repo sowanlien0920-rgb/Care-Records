@@ -236,6 +236,11 @@ export const visitRecordSchema = z.object({
   vitals: vitalsSchema,
   /** 特記事項 */
   note: z.string(),
+  /**
+   * 特記事項をどう書いたか。legacy の noteSrc（一覧のアイコンが ✨ か 📝 かを決める）。
+   * AI 生成を Phase 1b で入れるまでは 'manual' か null になる。
+   */
+  noteSource: z.enum(['ai', 'manual']).nullable(),
   status: visitStatusSchema,
 
   /**

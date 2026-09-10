@@ -7,7 +7,7 @@
  *
  * 移植元: legacy/index.html:3248-3254（todoStage）、:1723-1735（renderStats）
  */
-import type { DispatchVisit, VisitRecord, VisitStatus } from '../types/contract';
+import { buildVisitRecord, type Dispatch, type DispatchVisit, type ResidentBrief, type VisitRecord, type VisitStatus } from '../types/contract';
 import { toMin } from '../utils/date';
 
 /**
@@ -54,4 +54,56 @@ export function totalMinutes(records: VisitRecord[]): number {
 /** 訪問と記録を visitId で突き合わせる */
 export function recordOf(visitId: string, records: VisitRecord[]): VisitRecord | undefined {
   return records.find((r) => r.visitId === visitId);
+}
+
+/**
+ * 配信された訪問から、まだ存在しない実施記録の初期値を作る。
+ *
+ * 記録の生成をここ1箇所に閉じることで、staffName / carePlanVersion といった
+ * 「あとから引けなくなる情報」の埋め忘れを防ぐ。どちらも法定文書としての
+ * 追跡可能性のために必要になる（記録単体で誰が実施し、どの計画に沿ったかを読めること）。
+ */
+export function newRecordFor(
+  visit: DispatchVisit,
+  dispatch: Dispatch,
+  resident: ResidentBrief | undefined,
+): VisitRecord {
+  const now = new Date().toISOString();
+  return buildVisitRecord({
+    visitId: visit.visitId,
+    facilityId: dispatch.facilityId,
+    date: dispatch.date,
+    staffId: dispatch.staffId,
+    residentId: visit.residentId,
+    serviceName: visit.serviceName,
+    plannedStart: visit.startTime,
+    plannedEnd: visit.endTime,
+    actualStart: '',
+    actualEnd: '',
+    tasks: [],
+    vitals: { temperature: '', bloodPressure: '', pulse: '' },
+    note: '',
+    noteSource: null,
+    status: '未完',
+    staffName: dispatch.staffName,
+    carePlanVersion: resident?.carePlan.planVersion ?? null,
+    approvedBy: null,
+    approvedByName: null,
+    approvedAt: null,
+    createdBy: dispatch.staffId,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+/**
+ * 一覧に出す実施内容。
+ *
+ * 記録があればその内容、無ければ訪問介護計画書のサービス内容を出す。
+ * legacy は予定にも tasks を持たせていたが、新モデルでは予定は配信から来る。
+ * 計画に沿った支援が求められるため、記録前に見せるべきは計画上のサービス内容になる。
+ */
+export function tasksOf(record: VisitRecord | undefined, resident: ResidentBrief | undefined): string[] {
+  if (record !== undefined && record.tasks.length > 0) return record.tasks;
+  return resident?.carePlan.plannedTasks ?? [];
 }

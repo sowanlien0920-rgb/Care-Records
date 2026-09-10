@@ -116,7 +116,7 @@ export function toRuleRole(role: StaffRole): RuleRole {
  * ロールではなくアカウントの canApprove フラグを見る。
  * 承認者は記録に残す必要がある（法定要件）ため、判定を1箇所に閉じる。
  */
-export function canApprove(account: StaffAccount | null): boolean {
+export function canApprove(account: StaffAccount | null): account is StaffAccount {
   return account !== null && account.canApprove;
 }
 

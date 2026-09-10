@@ -254,6 +254,7 @@ export function mockSeedRecords(): VisitRecord[] {
           vitals: { temperature: '', bloodPressure: '', pulse: '' },
           // legacy の seed も特記事項を空にしている。記載チェックの対象になる
           note: '',
+          noteSource: null,
           status: approved ? '完了' : '済',
           staffName: staff.name,
           carePlanVersion: 1,

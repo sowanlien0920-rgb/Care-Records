@@ -4,7 +4,7 @@
  */
 import { createContext } from 'react';
 import type { AdapterError, BadgeCounts, RecordListing } from '../data/adapter';
-import type { Dispatch, VisitRecord } from '../types/contract';
+import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
 import type { StaffAccount } from '../types/local';
 
 /**
@@ -39,6 +39,13 @@ export interface CareStore {
   staffId: string | null;
   setStaffId: (staffId: string) => void;
 
+  /**
+   * 一覧の絞り込み。'all' はキャンセルも含む（legacy/index.html:1745 と同じ）。
+   * 統計とバッジはこの絞り込みの影響を受けない。
+   */
+  filter: VisitStatus | 'all';
+  setFilter: (filter: VisitStatus | 'all') => void;
+
   // ── サーバーデータ ────────────────────────────────────
   staff: Async<StaffAccount[]>;
   dispatch: Async<Dispatch | null>;
@@ -49,6 +56,14 @@ export interface CareStore {
 
   // ── 操作 ──────────────────────────────────────────────
   saveRecord: (record: VisitRecord) => Promise<boolean>;
+  /** 開始を打刻する。予定終了を過ぎていたら打刻せずメッセージだけ返す */
+  stampStartAt: (visitId: string) => Promise<void>;
+  /** 終了を打刻する。状態が「済」になる */
+  stampEndAt: (visitId: string) => Promise<void>;
+  /** 承認して「完了」にする。承認者を記録に残す（法定要件） */
+  approveVisit: (visitId: string) => Promise<void>;
+  /** その日の「済」をまとめて承認する。絞り込みの影響を受けない */
+  approveAllToday: () => Promise<void>;
   /** 失敗した取得をやり直す。error 表示から利用者が次の行動を取れるようにする */
   retry: () => void;
 

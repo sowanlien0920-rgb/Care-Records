@@ -577,7 +577,7 @@ Phase 1a の6ステップ。
 - [x] **2. 契約とアダプタを定義する** — contract.ts / local.ts / adapter.ts / localAdapter.ts / mock.ts / store / incidentAdapter
 - [x] **2r. reviewing-code の指摘対応** — 要修正3・推奨2・提案5 + ドメイン指摘4 を反映
 - [x] **3. アプリシェルと簡易ログイン** — StaffPicker / Header / DateBar / Toolbar / Stats / domain/visitStatus
-- [ ] 4. サービス実施一覧
+- [x] **4. サービス実施一覧** — VisitList / VisitRow / Filters / domain/timeValidation
 - [ ] 5. 記録モーダルと利用者マスタ
 - [ ] 6. 残りの画面
 
@@ -650,6 +650,22 @@ Context の定義を Provider と同じファイルに置くと Fast Refresh が
 
 配信には実施記録が含まれないため、モックだけでは全件が「未完」になり、済・完了の表示を確認できなかった。legacy の `seed()`（`:1665-1700`）と同じ分布（昨日＝承認済み、今日の過去分＝記録あり未承認）を再現する。legacy は開始時刻に乱数を使っていたが、検証を不安定にしないため固定にした。
 
+**21. `src/domain/timeValidation.ts` を前倒しした（計画では Phase 1b）**
+
+一覧の「開始」「終了」ボタンが打刻を行うため、`clampToPlan` / `stampStart` / `stampEnd` が必要になった。記録モーダル側の検証は Phase 1b のまま残してある。
+
+**22. `VisitRecord` に `noteSource` を追加した**
+
+legacy の `noteSrc` にあたる。一覧の特記事項アイコンが ✨（AI 生成）か 📝（手入力）かを決める。AI 生成は Phase 1b だが、後から契約の版を上げずに済むよう今のうちに入れた。
+
+**23. 実施内容の出所を「記録があれば記録、無ければ訪問介護計画書のサービス内容」とした**
+
+legacy は予定側に `tasks` を持たせていたが、新モデルでは予定は配信から来る。ヘルパーは計画に沿った支援を求められるため、記録前に見せるべきは計画上のサービス内容になると判断した（`tasksOf()`）。
+
+**24. 承認は「権限があれば自分として承認」に単純化した**
+
+legacy は権限が無いとき代理承認者の認証モーダルを出す（`requireAdmin`、`legacy/index.html:4306`）。Phase 1a は簡易ログインのため、その導線はステップ6以降に回し、権限が無ければ通知のみとした。
+
 ### 実装中に気づいた点
 
 **レビューで判明した設計上の欠落4件（すべて対応済み）**
@@ -669,6 +685,12 @@ Context の定義を Provider と同じファイルに置くと Fast Refresh が
 **キャンセルの正が二重になっている（未対応）**
 
 `DispatchVisit.cancelled`（kpi-react 由来）と `VisitStatus = 'キャンセル'`（carerecords 由来）が両方あり、どちらが正か契約が規定していない。kpi-react 側でキャンセルされた訪問に carerecords 側で既に「済」の記録がある場合の扱いが未定。**ステップ4（サービス実施一覧）で状態の出し分けを作るときに決める必要がある。**
+
+**キャンセルのチップが2行に折り返すのは legacy も同じ（移植の差ではない）**
+
+`.badge` は `min-width:62px` + 左右 `padding:10px` に対し、`.row` の第1カラムが `78px` 固定のため「キャンセル」が収まらない。**legacy を直接ブラウザで開いて計測したところ、同じく 78×52px（2行）だった**（通常の状態は 62×32px）。移植の欠陥ではないので直していない。
+
+なお `legacy/index.html` は `file://` で直接開けるため、見た目の差が出たときは**移植先と並べて計測するのが確実**。ステップ5以降でも同じ手が使える。
 
 **`.on` が無いと表示されないクラスが10種ある ← 移植の落とし穴**
 

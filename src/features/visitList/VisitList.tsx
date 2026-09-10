@@ -1,0 +1,103 @@
+/*
+ * サービス実施一覧。移植元: legacy/index.html:861-879（パネル）、:1742-1784（renderRows）
+ *
+ * ── legacy の仕様として写しているもの ────────────────────
+ * - ソートは予定開始時刻の昇順のみ。第2キーは無い（:1710）
+ * - 絞り込みの「すべて」はキャンセルを含む（:1745）
+ * - 絞り込みは統計・バッジに影響しない。切替時に再計算されるのは一覧だけ（:1803）
+ * - 一括承認の対象はその日その職員の「済」全件で、絞り込みを無視する（:1824）
+ * - CSV も絞り込みを無視して全状態を出す（:1833）
+ * - 0件の文言は絞り込みの有無で変わらない（:1747）
+ */
+import { useCareStore } from '../../store/useCareStore';
+import { deriveStatus, recordOf } from '../../domain/visitStatus';
+import { canApprove } from '../../types/local';
+import { toMin } from '../../utils/date';
+import { Filters } from './Filters';
+import { VisitRow } from './VisitRow';
+
+export function VisitList() {
+  const {
+    dispatch, records, filter, retry, notify,
+    stampStartAt, stampEndAt, approveVisit, approveAllToday, session,
+  } = useCareStore();
+
+  const loading = dispatch.status === 'loading' || records.status === 'loading';
+  const plan = dispatch.status === 'ready' ? dispatch.data : null;
+  const recs = records.status === 'ready' ? records.data.records : [];
+  const unreadable = records.status === 'ready' ? records.data.unreadable : [];
+
+  // legacy/index.html:1710。予定開始の昇順。未入力は 00:00 と同じ扱いで先頭に来る
+  const sorted = [...(plan?.visits ?? [])].sort((a, b) => (toMin(a.startTime) ?? 0) - (toMin(b.startTime) ?? 0));
+  const visible = filter === 'all'
+    ? sorted
+    : sorted.filter((v) => deriveStatus(v, recordOf(v.visitId, recs)) === filter);
+
+  const later = (name: string) => () => notify(`${name}はステップ6で実装します`);
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>サービス実施一覧</h2>
+        <span className="hint">未完＝登録なし ／ 済＝登録あり ／ 完了＝承認OK</span>
+        <div className="spacer"></div>
+        {/* legacy は .chipbtn.primary の青をインライン style で紫に上書きしている（:866） */}
+        <button className="chipbtn primary" id="bulkBtn"
+          style={{ background: 'linear-gradient(120deg,#6a4bd6,#2b7ee6)', boxShadow: '0 4px 12px rgba(90,70,210,.28)' }}
+          onClick={later('特記事項の一括作成')}>✨ 特記事項を一括作成</button>
+        {/* legacy/index.html:4240。承認権限のある職員にだけ出す */}
+        {canApprove(session) && (
+          <button className="chipbtn" id="approveAll" onClick={() => { void approveAllToday(); }}>一括承認</button>
+        )}
+        <button className="chipbtn" id="csvBtn" onClick={later('CSV出力')}>CSV出力</button>
+        <button className="chipbtn primary" id="addBtn" onClick={later('予定の追加')}>＋ 予定を追加</button>
+      </div>
+
+      <Filters />
+
+      <div className="rows" id="rows">
+        {loading && <div className="empty"><div className="ico">⏳</div><p>読み込んでいます…</p></div>}
+
+        {dispatch.status === 'error' && (
+          <div className="empty"><div className="ico">⚠️</div>
+            <p>{dispatch.message}</p>
+            <button className="chipbtn" onClick={retry}>再試行</button>
+          </div>
+        )}
+        {records.status === 'error' && (
+          <div className="empty"><div className="ico">⚠️</div>
+            <p>{records.message}</p>
+            <button className="chipbtn" onClick={retry}>再試行</button>
+          </div>
+        )}
+
+        {/* 読み出せない記録は隠さない。法定文書なので欠落に気づけることを優先する */}
+        {unreadable.length > 0 && (
+          <div className="empty"><div className="ico">⚠️</div>
+            <p>読み出せない記録が {unreadable.length} 件あります。事業所に連絡してください。</p>
+          </div>
+        )}
+
+        {!loading && dispatch.status === 'ready' && records.status === 'ready' && visible.length === 0 && (
+          // legacy/index.html:1747。絞り込み中でも文言は同じ
+          <div className="empty"><div className="ico">🗓️</div>
+            <p>該当する予定はありません。<br />「＋ 予定を追加」から登録できます。</p>
+          </div>
+        )}
+
+        {!loading && plan !== null && visible.map((v) => (
+          <VisitRow
+            key={v.visitId}
+            visit={v}
+            record={recordOf(v.visitId, recs)}
+            resident={plan.residents.find((r) => r.residentId === v.residentId)}
+            onStart={() => { void stampStartAt(v.visitId); }}
+            onEnd={() => { void stampEndAt(v.visitId); }}
+            onApprove={() => { void approveVisit(v.visitId); }}
+            onEdit={later('記録画面')}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}

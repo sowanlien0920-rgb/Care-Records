@@ -3,9 +3,12 @@
  * Provider コンポーネントと同じファイルに置くと Fast Refresh が効かなくなるため分けている。
  */
 import { createContext } from 'react';
-import type { AdapterError, BadgeCounts, RecordListing } from '../data/adapter';
+import type { AdapterError, BadgeCounts, RecordListing, VisitRow } from '../data/adapter';
 import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
-import type { RecordPrefs, StaffAccount } from '../types/local';
+import type { Incident, RecordPrefs, StaffAccount } from '../types/local';
+
+/** ツールバーから開く画面の種類 */
+export type PanelKind = 'todo' | 'pending' | 'report' | 'timeline' | 'incident';
 
 /**
  * 非同期の4状態を型で表す。
@@ -68,6 +71,8 @@ export interface CareStore {
   records: Async<RecordListing>;
   /** ツールバーのバッジ件数 */
   badges: Async<BadgeCounts>;
+  /** 日付・職員をまたぐ訪問と記録の一覧。未承認一覧・未完了・帳票・経過記録が使う */
+  visitRows: Async<VisitRow[]>;
 
   // ── 操作 ──────────────────────────────────────────────
   saveRecord: (record: VisitRecord) => Promise<boolean>;
@@ -76,6 +81,19 @@ export interface CareStore {
   /** 記録支援設定の読み書き。法定文書系は kpi-react が正なのでここには含めない */
   getPrefs: (residentId: string) => Promise<RecordPrefs>;
   savePrefs: (residentId: string, prefs: RecordPrefs) => Promise<boolean>;
+
+  /**
+   * ヒヤリハット・事故報告。
+   * 統合先が未定のため DataAdapter とは別の境界（incidentAdapter）に置いている。
+   * 詳細は src/features/incident/incidentAdapter.ts を参照。
+   */
+  incidents: Async<Incident[]>;
+  saveIncident: (incident: Incident) => Promise<boolean>;
+
+  /** ツールバーから開く画面。null なら何も開いていない */
+  panel: PanelKind | null;
+  openPanel: (panel: PanelKind) => void;
+  closePanel: () => void;
   /** 開始を打刻する。予定終了を過ぎていたら打刻せずメッセージだけ返す */
   stampStartAt: (visitId: string) => Promise<void>;
   /** 終了を打刻する。状態が「済」になる */

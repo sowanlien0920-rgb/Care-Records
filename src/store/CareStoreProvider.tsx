@@ -14,13 +14,14 @@
  * 条件が変わった直後に前の条件の結果が一瞬見えることもある。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing } from '../data/adapter';
-import { CareStoreContext, type Async, type CareStore } from './context';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow } from '../data/adapter';
+import { CareStoreContext, type Async, type CareStore, type PanelKind } from './context';
 import { localAdapter } from '../data/localAdapter';
 import { iso } from '../utils/date';
 import { newRecordFor, recordOf } from '../domain/visitStatus';
 import { stampEnd, stampStart } from '../domain/timeValidation';
-import { canApprove, type RecordPrefs } from '../types/local';
+import { canApprove, type Incident, type RecordPrefs } from '../types/local';
+import { localIncidentAdapter } from '../features/incident/incidentAdapter';
 import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
 import type { StaffAccount } from '../types/local';
 
@@ -57,12 +58,15 @@ export function CareStoreProvider({
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [residentModalOpen, setResidentModalOpen] = useState(false);
   const [selectedResidentId, setSelectedResidentId] = useState<string | null>(null);
+  const [panel, setPanel] = useState<PanelKind | null>(null);
+  const [incidentsKeyed, setIncidentsKeyed] = useState<Keyed<Incident[]> | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   const [staffKeyed, setStaffKeyed] = useState<Keyed<StaffAccount[]> | null>(null);
   const [dispatchKeyed, setDispatchKeyed] = useState<Keyed<Dispatch | null> | null>(null);
   const [recordsKeyed, setRecordsKeyed] = useState<Keyed<RecordListing> | null>(null);
   const [badgesKeyed, setBadgesKeyed] = useState<Keyed<BadgeCounts> | null>(null);
+  const [rowsKeyed, setRowsKeyed] = useState<Keyed<VisitRow[]> | null>(null);
 
   const [notification, setNotification] = useState<string | null>(null);
   // 通知を連続で出したとき、前のタイマーが後の通知を早期に消さないようにする。
@@ -113,6 +117,24 @@ export function CareStoreProvider({
     return () => { alive = false; };
   }, [adapter, date, staffId, scopedKey]);
 
+  // ヒヤリハット。統合先が未定のため DataAdapter とは別経路で取る
+  useEffect(() => {
+    let alive = true;
+    localIncidentAdapter.list()
+      .then((data) => { if (alive) setIncidentsKeyed({ key: staffKey, result: { status: 'ready', data } }); })
+      .catch((e) => { if (alive) setIncidentsKeyed({ key: staffKey, result: toAsyncError(e) }); });
+    return () => { alive = false; };
+  }, [staffKey]);
+
+  // 日付・職員をまたぐ一覧
+  useEffect(() => {
+    let alive = true;
+    adapter.listVisitRows()
+      .then((data) => { if (alive) setRowsKeyed({ key: staffKey, result: { status: 'ready', data } }); })
+      .catch((e) => { if (alive) setRowsKeyed({ key: staffKey, result: toAsyncError(e) }); });
+    return () => { alive = false; };
+  }, [adapter, staffKey]);
+
   // バッジ
   useEffect(() => {
     const me = session?.staffId;
@@ -142,6 +164,8 @@ export function CareStoreProvider({
   // 職員未選択のときは取得そのものが起きないので、待たせずに空を返す。
   // 毎描画で新しいオブジェクトを作ると Context の値が変わり全体が再描画されるため memo する。
   const staff = useMemo(() => resolve(staffKeyed, staffKey), [staffKeyed, staffKey]);
+  const incidents = useMemo(() => resolve(incidentsKeyed, staffKey), [incidentsKeyed, staffKey]);
+  const visitRows = useMemo(() => resolve(rowsKeyed, staffKey), [rowsKeyed, staffKey]);
   const dispatch = useMemo<Async<Dispatch | null>>(
     () => (staffId === null ? { status: 'ready', data: null } : resolve(dispatchKeyed, scopedKey)),
     [staffId, dispatchKeyed, scopedKey],
@@ -256,6 +280,20 @@ export function CareStoreProvider({
 
   const openRecord = useCallback((visitId: string) => setEditingVisitId(visitId), []);
   const closeRecord = useCallback(() => setEditingVisitId(null), []);
+  const openPanel = useCallback((p: PanelKind) => setPanel(p), []);
+  const closePanel = useCallback(() => setPanel(null), []);
+
+  const saveIncident = useCallback(async (incident: Incident): Promise<boolean> => {
+    try {
+      await localIncidentAdapter.save(incident);
+    } catch (e) {
+      notify(e instanceof AdapterError ? e.userMessage : '報告の保存に失敗しました。');
+      return false;
+    }
+    setReloadToken((n) => n + 1);
+    return true;
+  }, [notify]);
+
   const openResident = useCallback((residentId: string | null) => {
     setSelectedResidentId(residentId);
     setResidentModalOpen(true);
@@ -292,17 +330,21 @@ export function CareStoreProvider({
     filter, setFilter,
     editingVisitId, openRecord, closeRecord,
     residentModalOpen, selectedResidentId, openResident, closeResident,
-    staff, dispatch, records, badges,
+    staff, dispatch, records, badges, visitRows,
     saveRecord, deleteRecord, getPrefs, savePrefs,
+    incidents, saveIncident,
+    panel, openPanel, closePanel,
     stampStartAt, stampEndAt, approveVisit, approveAllToday,
     retry,
     notification, notify,
-  }), [date, session, signIn, signOut, staffId, filter,
-       editingVisitId, openRecord, closeRecord, residentModalOpen, selectedResidentId, openResident, closeResident,
-       staff, dispatch, records, badges,
-       saveRecord, deleteRecord, getPrefs, savePrefs,
-       stampStartAt, stampEndAt, approveVisit, approveAllToday,
-       retry, notification, notify]);
+  }), [
+       date, session, signIn, signOut, staffId, filter,
+       editingVisitId, openRecord, closeRecord, residentModalOpen, selectedResidentId, openResident,
+       closeResident, staff, dispatch, records, badges, visitRows,
+       saveRecord, deleteRecord, getPrefs, savePrefs, incidents, saveIncident,
+       panel, openPanel, closePanel, stampStartAt, stampEndAt, approveVisit,
+       approveAllToday, retry, notification, notify
+  ]);
 
   return <CareStoreContext.Provider value={value}>{children}</CareStoreContext.Provider>;
 }

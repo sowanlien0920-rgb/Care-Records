@@ -14,6 +14,11 @@ import { Stats } from './features/shell/Stats';
 import { VisitList } from './features/visitList/VisitList';
 import { RecordModal } from './features/record/RecordModal';
 import { ResidentModal } from './features/resident/ResidentModal';
+import { PendingModal } from './features/approval/PendingModal';
+import { TodoModal } from './features/todo/TodoModal';
+import { IncidentModal } from './features/incident/IncidentModal';
+import { ReportModal } from './features/report/ReportModal';
+import { TimelineModal } from './features/timeline/TimelineModal';
 
 function Shell() {
   const { session, notification } = useCareStore();
@@ -32,6 +37,11 @@ function Shell() {
       </div>
       <RecordModal />
       <ResidentModal />
+      <TodoModal />
+      <PendingModal />
+      <ReportModal />
+      <TimelineModal />
+      <IncidentModal />
       {/* 通知は live region にする。トーストだけだと読み上げに乗らない */}
       {notification !== null && <div className="toast on" role="status" aria-live="polite">{notification}</div>}
     </>

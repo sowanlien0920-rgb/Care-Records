@@ -11,7 +11,7 @@
  *      境界を設けた意味が消える
  *   3. 「読めなかった」と「0件だった」を区別する。前者は error、後者は empty
  */
-import type { Dispatch, VisitRecord } from '../types/contract';
+import type { Dispatch, DispatchVisit, ResidentBrief, VisitRecord } from '../types/contract';
 import type { AuditLog, RecordPrefs, StaffAccount } from '../types/local';
 
 /**
@@ -66,6 +66,20 @@ export interface BadgeCounts {
   pending: number;
 }
 
+/**
+ * 配信された訪問と、それに対応する実施記録の組。
+ * 未承認一覧・未完了の訪問・帳票・経過記録は、いずれも日付と職員をまたぐため、
+ * 1日1職員で取る配信とは別の経路が要る。
+ */
+export interface VisitRow {
+  date: string;
+  staffId: string;
+  staffName: string;
+  visit: DispatchVisit;
+  record: VisitRecord | undefined;
+  resident: ResidentBrief | undefined;
+}
+
 export interface DataAdapter {
   // ── 職員（Phase 5 で Firebase Auth に置き換わる） ──────────
   listStaff(): Promise<StaffAccount[]>;
@@ -95,6 +109,15 @@ export interface DataAdapter {
    * 画面で表示中の職員とは異なりうる（サ責は他職員を表示できるため）。
    */
   getBadgeCounts(sessionStaffId: string): Promise<BadgeCounts>;
+
+  /**
+   * 訪問と記録を突き合わせた一覧。日付・職員をまたいで取る。
+   *
+   * Phase 5 では Firestore のクエリになる。ヘルパーはルール上
+   * 自分の分しか読めないため、staffId を渡さない呼び出しは
+   * サービス提供責任者以上でのみ成立する点に注意する。
+   */
+  listVisitRows(opts?: { from?: string; to?: string; staffId?: string }): Promise<VisitRow[]>;
 
   // ── 記録支援設定（carerecords 固有） ──────────────────────
   getPrefs(residentId: string): Promise<RecordPrefs>;

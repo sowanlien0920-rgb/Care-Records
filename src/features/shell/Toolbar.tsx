@@ -18,7 +18,7 @@ function Badge({ id, count }: { id: string; count: number }) {
 }
 
 export function Toolbar() {
-  const { session, badges, notify } = useCareStore();
+  const { session, badges, openPanel } = useCareStore();
   const mgr = isManager(session);
   const sup = isSupervisor(session);
   const approver = canApprove(session);
@@ -26,23 +26,23 @@ export function Toolbar() {
   // バッジが読めないことは画面全体を止める理由にならないので 0 を出す。
   // 読めなかったこと自体は通知で伝える経路をステップ6で用意する
   const counts = badges.status === 'ready' ? badges.data : { todo: 0, pending: 0 };
-  const later = (name: string) => () => notify(`${name}はステップ6で実装します`);
 
   return (
     <div className="toolbar">
       {/* legacy/index.html:4238。todoBtn は明示的に常時表示 */}
-      <button className="tbtn" id="todoBtn" onClick={later('未完了の訪問')}>
+      <button className="tbtn" id="todoBtn" onClick={() => openPanel('todo')}>
         📋 未完了の訪問 <Badge id="todoBadge" count={counts.todo} />
       </button>
       {approver && (
-        <button className="tbtn" id="pendBtn" onClick={later('未承認一覧')}>
+        <button className="tbtn" id="pendBtn" onClick={() => openPanel('pending')}>
           🕓 未承認一覧 <Badge id="pendBadge" count={counts.pending} />
         </button>
       )}
-      {sup && <button className="tbtn" id="repBtn" onClick={later('帳票・集計')}>📊 帳票・集計</button>}
-      {sup && <button className="tbtn" id="tlBtn" onClick={later('利用者の経過記録')}>📖 利用者の経過記録</button>}
+      {sup && <button className="tbtn" id="repBtn" onClick={() => openPanel('report')}>📊 帳票・集計</button>}
+      {sup && <button className="tbtn" id="tlBtn" onClick={() => openPanel('timeline')}>📖 利用者の経過記録</button>}
       {/* legacy では applyPerms の対象外で常時表示 */}
-      <button className="tbtn" id="incBtn" onClick={later('ヒヤリハット・事故報告')}>⚠ ヒヤリハット・事故報告</button>
+      {/* legacy/index.html:4230-4245。incBtn は applyPerms の対象外で全ロールに出る */}
+      <button className="tbtn" id="incBtn" onClick={() => openPanel('incident')}>⚠ ヒヤリハット・事故報告</button>
       {/* バックアップは移植しない（計画書 §2 の対象外）。管理者のみ表示だった枠は空ける */}
       {mgr && <div className="sep"></div>}
       {!mgr && <div className="sep"></div>}

@@ -23,13 +23,19 @@ const FOCUSABLE = [
 ].join(',');
 
 export function Modal({
-  title, subtitle, onClose, children, footer,
+  title, subtitle, onClose, children, footer, width,
 }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /**
+   * モーダルの最大幅(px)。legacy は画面ごとに .modal へインラインで
+   * `width:min(Npx,100%)` を指定していた。既定は styles.css:211 の 680px。
+   * ここを省くと、行のグリッドにある 1fr 列が潰れて表示が崩れる。
+   */
+  width?: number;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -77,7 +83,14 @@ export function Modal({
       // 背景のクリックで閉じる。中身のクリックでは閉じない
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={modalRef}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        ref={modalRef}
+        style={width === undefined ? undefined : { width: `min(${width}px,100%)` }}
+      >
         <div className="modal-head">
           <div>
             <div className="t" id={titleId}>{title}</div>

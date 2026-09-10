@@ -8,7 +8,7 @@
  * には触れない。移行対象の実データは存在しないと確認済みのため、
  * 新しいキーで独立して開始する。
  */
-import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing } from './adapter';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow } from './adapter';
 import { MOCK_STAFF, mockDispatch, mockDispatchDates, mockSeedRecords } from './mock';
 import { parseDispatch, parseVisitRecord, type Dispatch, type VisitRecord } from '../types/contract';
 import {
@@ -182,6 +182,29 @@ export const localAdapter: DataAdapter = {
    *   未承認 : 全職員・全期間
    * ログイン中の職員と表示中の職員は、サ責が他職員を表示したときに食い違う。
    */
+  async listVisitRows(opts): Promise<VisitRow[]> {
+    const { records } = readRecords();
+    const rows: VisitRow[] = [];
+    for (const date of mockDispatchDates()) {
+      if (opts?.from !== undefined && date < opts.from) continue;
+      if (opts?.to !== undefined && date > opts.to) continue;
+      for (const staff of MOCK_STAFF) {
+        if (opts?.staffId !== undefined && staff.staffId !== opts.staffId) continue;
+        const d = mockDispatch(date, staff.staffId);
+        if (d === null) continue;
+        for (const v of d.visits) {
+          rows.push({
+            date, staffId: staff.staffId, staffName: staff.name,
+            visit: v,
+            record: recordOf(v.visitId, records),
+            resident: d.residents.find((r) => r.residentId === v.residentId),
+          });
+        }
+      }
+    }
+    return rows;
+  },
+
   async deleteRecord(visitId: string): Promise<void> {
     const { records, unreadableRaw } = readRecords();
     // 読めない記録は消さずに持ち越す。法定文書は読めないからといって捨てられない

@@ -70,6 +70,7 @@ export function ResidentModal() {
       title="利用者マスタ"
       subtitle="訪問介護計画に関する情報は kpi-react が正です。ここでは閲覧のみできます"
       onClose={closeResident}
+      width={980}
       footer={
         <>
           <span style={{ fontSize: 12.5, color: 'var(--ink-sub)', fontWeight: 700 }}>{current.name} さんの情報</span>

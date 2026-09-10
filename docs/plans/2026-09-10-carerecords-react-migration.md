@@ -574,7 +574,7 @@ legacy は暗黙の `null` / `undefined` や型の混在を含む。strict で�
 Phase 1a の6ステップ。
 
 - [x] **1. 足場を作る** — legacy 退避 / Vite + React 19 + TS(strict) / ESLint / CSS 729行移送 / CLAUDE.md / .gitignore / README
-- [ ] 2. 契約とアダプタを定義する
+- [x] **2. 契約とアダプタを定義する** — contract.ts / local.ts / adapter.ts / localAdapter.ts / mock.ts / store
 - [ ] 3. アプリシェルと簡易ログイン
 - [ ] 4. サービス実施一覧
 - [ ] 5. 記録モーダルと利用者マスタ
@@ -598,7 +598,29 @@ Phase 1a の6ステップ。
 
 計画書に 731行と記載していたが、`<style>` / `</style>` タグ自体を除いた実体は 729行（`legacy/index.html:8-736`）。移送内容に欠落はなく、波括弧の対応（423対423）とタグ混入なしを確認済み。
 
+**5. Zod を依存に追加した（計画にバリデーションライブラリの記載が無かった）**
+
+`designing-api-contracts` が「TypeScript の型は実行時に存在しないため外部入力を何も守らない。スキーマを単一の源にする」としている。配信ドキュメントは Phase 5 で Firestore から来る**外部入力**であり、`schemaVersion` の照合だけでは「版は正しいが形が違う」を検出できない。手書きの検証を10種類の型に対して書く方が、法定文書を扱う領域では risk が高いと判断した。
+
+型は `z.infer` で導出しており、スキーマと型が二重定義になっていない。
+
+**6. `src/store/context.ts` を追加した（計画の一覧に無かった）**
+
+Context の定義を Provider と同じファイルに置くと Fast Refresh が効かなくなる（ESLint の `react-refresh/only-export-components` が指摘）。Context 定義・`Async` 型・`CareStore` 型を分離した。
+
+**7. loading を state に持たない形にした**
+
+当初 `setState({status:'loading'})` を effect の冒頭で呼んでいたが、React 19 の `react-hooks/set-state-in-effect` が error として弾いた。取得結果を「取得条件のキー」と一緒に保持し、いま必要なキーと一致しなければ loading とみなす形に変えた。副次的に、日付や職員を切り替えた直後に前の条件の結果が一瞬見える問題も起きなくなる。
+
 ### 実装中に気づいた点
+
+**契約の版と形は分けて検証する必要がある**
+
+`schemaVersion` の照合だけでは不十分だと実際に確認した。版を 1 のままにして `serviceName` を範囲外の値、`startTime` を不正な形式にした配信は、版の照合を通過する。Zod の形の検証が両方を捕まえる。ブラウザ上で5項目を確認済み。
+
+**`saveRecord` は現状 last-write-wins になっている**
+
+`localAdapter.saveRecord` は同じ `visitId` の記録を無条件に上書きする。Phase 5 で複数端末から同じ訪問を編集する状況が起きうるが、Phase 1a では単一端末のため手を付けていない。Firestore 化のときに楽観的ロック（`updatedAt` の照合）を検討する。
 
 **`legacy/dist/app.html` が `.gitignore` の `dist/` に一致してしまう問題**
 

@@ -3,7 +3,7 @@
  * Provider コンポーネントと同じファイルに置くと Fast Refresh が効かなくなるため分けている。
  */
 import { createContext } from 'react';
-import type { AdapterError } from '../data/adapter';
+import type { AdapterError, RecordListing } from '../data/adapter';
 import type { Dispatch, VisitRecord } from '../types/contract';
 import type { StaffAccount } from '../types/local';
 
@@ -29,7 +29,8 @@ export interface CareStore {
   // ── サーバーデータ ────────────────────────────────────
   staff: Async<StaffAccount[]>;
   dispatch: Async<Dispatch | null>;
-  records: Async<VisitRecord[]>;
+  /** 読めた記録と、読み出せなかった記録。破損は隠さず利用者に見せる */
+  records: Async<RecordListing>;
 
   // ── 操作 ──────────────────────────────────────────────
   saveRecord: (record: VisitRecord) => Promise<boolean>;

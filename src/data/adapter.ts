@@ -12,7 +12,7 @@
  *   3. 「読めなかった」と「0件だった」を区別する。前者は error、後者は empty
  */
 import type { Dispatch, VisitRecord } from '../types/contract';
-import type { AuditLog, Incident, RecordPrefs, StaffAccount } from '../types/local';
+import type { AuditLog, RecordPrefs, StaffAccount } from '../types/local';
 
 /**
  * 取得・保存に失敗したときの理由。
@@ -26,7 +26,9 @@ export type AdapterErrorKind =
   /** 通信の失敗。Phase 5 の firestoreAdapter で使う */
   | 'network'
   /** 権限がない。Phase 5 の Firestore ルールで弾かれた場合 */
-  | 'forbidden';
+  | 'forbidden'
+  /** 原因を特定できないもの。他の kind に丸めない */
+  | 'unknown';
 
 export class AdapterError extends Error {
   readonly kind: AdapterErrorKind;
@@ -41,6 +43,16 @@ export class AdapterError extends Error {
   }
 }
 
+/**
+ * 実施記録の読み出し結果。
+ * 破損した記録があっても、読めた分は返す。
+ */
+export interface RecordListing {
+  records: VisitRecord[];
+  /** 読み出せなかった記録。visitId が読めない場合は null が入る */
+  unreadable: Array<{ visitId: string | null; reason: string }>;
+}
+
 export interface DataAdapter {
   // ── 職員（Phase 5 で Firebase Auth に置き換わる） ──────────
   listStaff(): Promise<StaffAccount[]>;
@@ -50,17 +62,19 @@ export interface DataAdapter {
   getDispatch(date: string, staffId: string): Promise<Dispatch | null>;
 
   // ── 実施記録（carerecords が書く） ────────────────────────
-  /** staffId を省略すると事業所全体。呼び出し側でロールを確認すること */
-  listRecords(date: string, staffId?: string): Promise<VisitRecord[]>;
+  /**
+   * staffId を省略すると事業所全体。呼び出し側でロールを確認すること。
+   *
+   * 読めた記録と読めなかった記録を分けて返す。実施記録は法定文書であり、
+   * 1件の破損で全件を読めなくするのも、破損を黙って捨てるのも取れない。
+   * 読めた分は使わせ続け、読めなかった分は件数と visitId を利用者に見せる。
+   */
+  listRecords(date: string, staffId?: string): Promise<RecordListing>;
   saveRecord(record: VisitRecord): Promise<void>;
 
   // ── 記録支援設定（carerecords 固有） ──────────────────────
   getPrefs(residentId: string): Promise<RecordPrefs>;
   savePrefs(residentId: string, prefs: RecordPrefs): Promise<void>;
-
-  // ── ヒヤリハット（統合先が未定。incidentAdapter で差し替える） ──
-  listIncidents(): Promise<Incident[]>;
-  saveIncident(incident: Incident): Promise<void>;
 
   // ── 変更履歴 ──────────────────────────────────────────────
   listAuditLogs(): Promise<AuditLog[]>;

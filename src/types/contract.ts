@@ -33,10 +33,33 @@ import { z } from 'zod';
  */
 export const SCHEMA_VERSION = 1;
 
-/** YYYY-MM-DD */
-export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 形式で指定する');
-/** HH:mm */
-export const timeSchema = z.string().regex(/^\d{2}:\d{2}$/, 'HH:mm 形式で指定する');
+/**
+ * YYYY-MM-DD。形だけでなく実在する日付かも見る。
+ * 正規表現だけだと 2026-13-45 や 2026-02-30 が通ってしまう。
+ */
+export const dateSchema = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 形式で指定する')
+  .refine((v) => {
+    const [y, m, d] = v.split('-').map(Number);
+    if (y === undefined || m === undefined || d === undefined) return false;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  }, '実在する日付を指定する');
+
+/**
+ * HH:mm。形だけでなく実在する時刻かも見る。
+ * 正規表現だけだと 25:70 や 99:99 が通ってしまう。
+ * 実績時間はサービス提供の根拠であり請求に直結するため、ここは緩めない。
+ */
+export const timeSchema = z.string()
+  .regex(/^\d{2}:\d{2}$/, 'HH:mm 形式で指定する')
+  .refine((v) => {
+    const [h, m] = v.split(':').map(Number);
+    return h !== undefined && m !== undefined && h < 24 && m < 60;
+  }, '実在する時刻を指定する');
+
+/** 実績時刻。未入力は空文字で表す。入っている場合は HH:mm として検証する */
+export const optionalTimeSchema = z.union([z.literal(''), timeSchema]);
 
 /** 訪問介護のサービス区分。legacy/index.html:1640 の SERVICES と一致させる */
 export const serviceKindSchema = z.enum([
@@ -197,9 +220,9 @@ export const visitRecordSchema = z.object({
   /** 予定時刻。配信の値を写す。実績が予定枠を外れていないかの判定に使う */
   plannedStart: timeSchema,
   plannedEnd: timeSchema,
-  /** 実績時刻。未入力は空文字 */
-  actualStart: z.string(),
-  actualEnd: z.string(),
+  /** 実績時刻。未入力は空文字。入力があれば HH:mm として検証する */
+  actualStart: optionalTimeSchema,
+  actualEnd: optionalTimeSchema,
 
   tasks: z.array(z.string()),
   vitals: vitalsSchema,
@@ -207,8 +230,26 @@ export const visitRecordSchema = z.object({
   note: z.string(),
   status: visitStatusSchema,
 
+  /**
+   * 記録時点の職員名。staffId とは別に名前そのものを残す。
+   * 記録は完結の日から2年（自治体により5年）保存する必要があり、
+   * その間ずっと staffs コレクションから氏名を引けるとは限らない。
+   * 記録単体で「誰が実施したか」を読めることが法定文書の要件になる。
+   */
+  staffName: z.string(),
+
+  /**
+   * どの版の訪問介護計画書に基づく記録か。
+   * 記載チェックは計画書（短期目標・援助内容・サービス内容）に照らして判定する。
+   * 版を残さないと、運営指導で計画書と記録の整合を問われたときに
+   * 「どの計画に沿った記録か」を示せない。配信に版が無ければ null。
+   */
+  carePlanVersion: z.number().int().nullable(),
+
   /** 承認者。誰が承認したかは記録として残す必要がある（法定要件） */
   approvedBy: z.string().nullable(),
+  /** 承認者の氏名。staffName と同じ理由で ID とは別に残す */
+  approvedByName: z.string().nullable(),
   approvedAt: z.string().nullable(),
 
   createdBy: z.string().min(1),
@@ -237,6 +278,24 @@ export type ParseResult<T> =
   | { ok: false; violation: ContractViolation };
 
 /**
+ * 版を照合する。違反があれば返し、無ければ null。
+ *
+ * 入力がオブジェクトですらない場合（Firestore が文字列や配列を返した等）は
+ * 版の問題ではなく形の問題なので、shape 違反として報告する。
+ * schema-version 違反として報告すると、障害調査を誤った方向に導く。
+ */
+function checkSchemaVersion(input: unknown): ContractViolation | null {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { kind: 'shape', message: 'オブジェクトではありません' };
+  }
+  const actual = (input as Record<string, unknown>)['schemaVersion'];
+  if (actual !== SCHEMA_VERSION) {
+    return { kind: 'schema-version', expected: SCHEMA_VERSION, actual };
+  }
+  return null;
+}
+
+/**
  * 配信ドキュメントを検証して取り込む。
  *
  * schemaVersion の照合だけでは「版は正しいが形が違う」を検出できないため、
@@ -244,11 +303,8 @@ export type ParseResult<T> =
  * ここでの実行時検証が実効的な安全網になる。
  */
 export function parseDispatch(input: unknown): ParseResult<Dispatch> {
-  const versioned = z.object({ schemaVersion: z.unknown() }).safeParse(input);
-  const actual = versioned.success ? versioned.data.schemaVersion : undefined;
-  if (actual !== SCHEMA_VERSION) {
-    return { ok: false, violation: { kind: 'schema-version', expected: SCHEMA_VERSION, actual } };
-  }
+  const violation = checkSchemaVersion(input);
+  if (violation !== null) return { ok: false, violation };
   const parsed = dispatchSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, violation: { kind: 'shape', message: z.prettifyError(parsed.error) } };
@@ -256,11 +312,27 @@ export function parseDispatch(input: unknown): ParseResult<Dispatch> {
   return { ok: true, value: parsed.data };
 }
 
-/** 実施記録を検証して取り込む。保存前と読み込み後の両方で通す */
+/**
+ * 実施記録を検証して取り込む。保存前と読み込み後の両方で通す。
+ *
+ * 記録は carerecords が書き kpi-react が読む双方向の契約なので、
+ * 配信と同じく版と形の両方を見る。Phase 5 では同じ Firestore を
+ * 複数端末・複数バージョンが触るため、版ズレは実際に起こりうる。
+ */
 export function parseVisitRecord(input: unknown): ParseResult<VisitRecord> {
+  const violation = checkSchemaVersion(input);
+  if (violation !== null) return { ok: false, violation };
   const parsed = visitRecordSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, violation: { kind: 'shape', message: z.prettifyError(parsed.error) } };
   }
   return { ok: true, value: parsed.data };
+}
+
+/**
+ * 実施記録を組み立てる唯一の入口。
+ * SCHEMA_VERSION の打刻をここに閉じることで、呼び出し側の入れ忘れを型で防ぐ。
+ */
+export function buildVisitRecord(fields: Omit<VisitRecord, 'schemaVersion'>): VisitRecord {
+  return { ...fields, schemaVersion: SCHEMA_VERSION };
 }

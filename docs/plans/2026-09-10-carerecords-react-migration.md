@@ -574,7 +574,8 @@ legacy は暗黙の `null` / `undefined` や型の混在を含む。strict で�
 Phase 1a の6ステップ。
 
 - [x] **1. 足場を作る** — legacy 退避 / Vite + React 19 + TS(strict) / ESLint / CSS 729行移送 / CLAUDE.md / .gitignore / README
-- [x] **2. 契約とアダプタを定義する** — contract.ts / local.ts / adapter.ts / localAdapter.ts / mock.ts / store
+- [x] **2. 契約とアダプタを定義する** — contract.ts / local.ts / adapter.ts / localAdapter.ts / mock.ts / store / incidentAdapter
+- [x] **2r. reviewing-code の指摘対応** — 要修正3・推奨2・提案5 + ドメイン指摘4 を反映
 - [ ] 3. アプリシェルと簡易ログイン
 - [ ] 4. サービス実施一覧
 - [ ] 5. 記録モーダルと利用者マスタ
@@ -612,7 +613,40 @@ Context の定義を Provider と同じファイルに置くと Fast Refresh が
 
 当初 `setState({status:'loading'})` を effect の冒頭で呼んでいたが、React 19 の `react-hooks/set-state-in-effect` が error として弾いた。取得結果を「取得条件のキー」と一緒に保持し、いま必要なキーと一致しなければ loading とみなす形に変えた。副次的に、日付や職員を切り替えた直後に前の条件の結果が一瞬見える問題も起きなくなる。
 
+**8〜14. reviewing-code の指摘対応で入れた変更（計画書 §4 の一覧に無いもの）**
+
+- `src/features/incident/incidentAdapter.ts` を新設し、ヒヤリハットを `DataAdapter` から外した。**計画書 §4 の変更対象ファイルには載っていたが、ステップ2 の実装で誤って `DataAdapter` に同居させていた。** 同居のままだと Phase 5 で `DataAdapter` を差し替えたとき送信先も carerecords 側 Firestore に固定され、J の保留が解けなくなる
+- `src/data/devTools.ts` を新設し、`resetLocalData()` を `localAdapter` から分離した。UI から import されたら CLAUDE.md 鉄則3 の違反だと名前で分かるようにするため
+- `DataAdapter.listRecords` の戻り値を `VisitRecord[]` から `RecordListing`（読めた分 + 読めなかった分）に変更した
+- `AdapterErrorKind` に `'unknown'` を追加した
+- `contract.ts` に `buildVisitRecord()`（版を打刻する唯一の入口）と `checkSchemaVersion()` を追加した
+- `VisitRecord` に `staffName` / `carePlanVersion` / `approvedByName` を追加した
+- `optionalTimeSchema` を追加した
+
+**未着手の指摘（次のステップで扱う）**
+
+- **ロール文字列が権限キーを兼ねている。** `canApprove` / `canViewAllStaff` が `'管理者'` / `'サービス提供責任者'` の日本語リテラルと一致で判定している。Phase 2 の Firestore ルールは `facility` / `supervisor` / `helper` の3ロールで設計する予定であり、この2組の対応表がどこにも無い。承認は法定要件に直結するので、ステップ3（簡易ログイン）で対応を明示的に持つ
+- **`StaffAccount` / `StaffRole` は Phase 3 で contract 側へ移す。** 職員とロールは Phase 3 以降 kpi-react が書き carerecords が読む情報になるため、`updating-contract` の判定基準では contract に属する。Phase 1a では簡易ログインのため local.ts に置いている
+
 ### 実装中に気づいた点
+
+**レビューで判明した設計上の欠落4件（すべて対応済み）**
+
+`code-reviewer` と本体の両方でレビューし、以下を直した。いずれも Phase 1a の時点では実害が出ていなかったが、以降のステップが積み上がると顕在化するものだった。
+
+1. **`parseDispatch()` がどこからも呼ばれていなかった。** ステップ2の目的（外部入力を守る位置に検証を置く）が達成できていなかった。`localAdapter.getDispatch` に接続し、モックも自己検証されるようにした。計画書のリスク3（モックが実データと乖離する）の検出手段にもなる
+2. **記録1件の破損で全期間・全職員の記録が読めなくなり、保存は成功を返していた。** 読みは日付で絞る前に全件検証して例外を投げ、書きは `as VisitRecord[]` で無検証に読んで書き戻していた。結果として「保存は成功したように見えるのに二度と表示されない記録」が生まれる。法定文書では記録の欠落と同じ扱いになる
+3. **保存後の再取得キーを「保存した記録のスコープ」で作っていた。** サ責が未承認一覧から他職員の記録を承認すると永久 loading になり、`retry` は error 分岐にしか描画されていないため抜け出せなかった。まさにステップ5・6 で作る機能で踏む
+4. **日付・時刻の検証が形だけだった。** `25:70` `99:99` `2026-02-30` `2026-13-45` がすべて通っていた。`actualStart` / `actualEnd` に至っては検証が一切なかった。実績時間はサービス提供の根拠であり請求に直結する
+
+**法定文書としての追跡可能性を2つ追加した**
+
+- `VisitRecord.carePlanVersion` — 記載チェックは訪問介護計画書に照らして判定するのに、記録側に版が残らなかった。運営指導で計画書と記録の整合を問われたときに「どの計画に沿った記録か」を示せない
+- `VisitRecord.staffName` / `approvedByName` — 記録は完結の日から2年（自治体により5年）保存する。その間ずっと `staffs` から氏名を引ける保証はない。legacy は氏名文字列を保存していた（`legacy/index.html:1829`）
+
+**キャンセルの正が二重になっている（未対応）**
+
+`DispatchVisit.cancelled`（kpi-react 由来）と `VisitStatus = 'キャンセル'`（carerecords 由来）が両方あり、どちらが正か契約が規定していない。kpi-react 側でキャンセルされた訪問に carerecords 側で既に「済」の記録がある場合の扱いが未定。**ステップ4（サービス実施一覧）で状態の出し分けを作るときに決める必要がある。**
 
 **契約の版と形は分けて検証する必要がある**
 

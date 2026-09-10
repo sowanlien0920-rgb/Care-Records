@@ -8,12 +8,12 @@
  * には触れない。移行対象の実データは存在しないと確認済みのため、
  * 新しいキーで独立して開始する。
  */
-import { AdapterError, type DataAdapter } from './adapter';
+import { AdapterError, type DataAdapter, type RecordListing } from './adapter';
 import { MOCK_STAFF, mockDispatch } from './mock';
-import { parseVisitRecord, type Dispatch, type VisitRecord } from '../types/contract';
+import { parseDispatch, parseVisitRecord, type Dispatch, type VisitRecord } from '../types/contract';
 import {
-  auditLogSchema, incidentSchema, recordPrefsSchema, blankRecordPrefs,
-  type AuditLog, type Incident, type RecordPrefs, type StaffAccount,
+  auditLogSchema, recordPrefsSchema, blankRecordPrefs,
+  type AuditLog, type RecordPrefs, type StaffAccount,
 } from '../types/local';
 import { z } from 'zod';
 
@@ -21,9 +21,11 @@ const NS = 'carerecords.v2';
 const KEY = {
   records: `${NS}.visitRecords`,
   prefs: `${NS}.recordPrefs`,
-  incidents: `${NS}.incidents`,
   auditLogs: `${NS}.auditLogs`,
 } as const;
+
+// ヒヤリハットは統合先が未定のため、この層ではなく
+// src/features/incident/incidentAdapter.ts が持つ（計画書 §2 の J）。
 
 /**
  * localStorage の読み書きは、プライベートモードや容量超過で例外を投げる。
@@ -73,6 +75,57 @@ function upsert<T extends Record<string, unknown>>(list: T[], item: T, idKey: ke
   return next;
 }
 
+/**
+ * 配信を契約に照らして検証する。
+ *
+ * Phase 5 では Firestore から来る外部入力になるため、この検証が唯一の防壁になる。
+ * Phase 1a の時点でもモックをここに通しておくことで、モックが契約から乖離したら
+ * その場で失敗する。計画書のリスク3（モックが Phase 4 の実データと乖離する）を
+ * 実際に検出できる状態にしておくことが目的になる。
+ */
+function validateDispatch(raw: unknown): Dispatch {
+  const parsed = parseDispatch(raw);
+  if (parsed.ok) return parsed.value;
+  if (parsed.violation.kind === 'schema-version') {
+    throw new AdapterError(
+      'contract',
+      'この端末では読み込めない形式の予定です。アプリを最新版に更新してください。',
+      `schemaVersion expected=${parsed.violation.expected} actual=${String(parsed.violation.actual)}`,
+    );
+  }
+  throw new AdapterError('contract', '予定の形式が正しくありません。事業所に連絡してください。', parsed.violation.message);
+}
+
+/**
+ * 保存済みの実施記録を読む。
+ *
+ * 1件でも壊れていたら全体を失敗させる、という扱いは取らない。
+ * それをすると破損1件で全期間・全職員の記録が読めなくなり、
+ * 保存領域の中身が変わらない以上、再試行しても復旧しない。
+ * 読めた分・読めなかった分・書き戻し用の原文を分けて返す。
+ */
+function readRecords(): { records: VisitRecord[]; unreadable: RecordListing['unreadable']; unreadableRaw: unknown[] } {
+  const all = readList(KEY.records, z.unknown());
+  const records: VisitRecord[] = [];
+  const unreadable: RecordListing['unreadable'] = [];
+  const unreadableRaw: unknown[] = [];
+  for (const raw of all) {
+    const parsed = parseVisitRecord(raw);
+    if (parsed.ok) {
+      records.push(parsed.value);
+      continue;
+    }
+    // visitId だけでも読めれば、どの訪問の記録が壊れているかを利用者に示せる
+    const idOnly = z.object({ visitId: z.string().min(1) }).safeParse(raw);
+    unreadable.push({
+      visitId: idOnly.success ? idOnly.data.visitId : null,
+      reason: parsed.violation.kind === 'shape' ? parsed.violation.message : 'schemaVersion 不一致',
+    });
+    unreadableRaw.push(raw);
+  }
+  return { records, unreadable, unreadableRaw };
+}
+
 export const localAdapter: DataAdapter = {
   async listStaff(): Promise<StaffAccount[]> {
     // Phase 5 で Firebase Auth + users/{uid} に置き換わる
@@ -81,23 +134,22 @@ export const localAdapter: DataAdapter = {
 
   async getDispatch(date: string, staffId: string): Promise<Dispatch | null> {
     // Phase 4 までは kpi-react が配信を書き出さないため、モックで代替する。
-    // Phase 5 では Firestore の dispatches/{date}_{staffId} を読み、
-    // parseDispatch() で schemaVersion と形を検証してから返す。
-    return mockDispatch(date, staffId);
+    // Phase 5 では mockDispatch() を Firestore の dispatches/{date}_{staffId} の
+    // 取得に差し替える。検証はこの境界に置いてあるので、差し替えても検証は残る。
+    const raw = mockDispatch(date, staffId);
+    // 配信が存在しないことは正常な結果であり、契約違反ではない
+    if (raw === null) return null;
+    return validateDispatch(raw);
   },
 
-  async listRecords(date: string, staffId?: string): Promise<VisitRecord[]> {
-    const all = readList(KEY.records, z.unknown());
-    const records: VisitRecord[] = [];
-    for (const raw of all) {
-      const parsed = parseVisitRecord(raw);
-      if (!parsed.ok) {
-        throw new AdapterError('contract', '保存されている実施記録の形式が正しくありません。',
-          parsed.violation.kind === 'shape' ? parsed.violation.message : 'schemaVersion 不一致');
-      }
-      records.push(parsed.value);
-    }
-    return records.filter((r) => r.date === date && (staffId === undefined || r.staffId === staffId));
+  async listRecords(date: string, staffId?: string): Promise<RecordListing> {
+    const { records, unreadable } = readRecords();
+    return {
+      records: records.filter((r) => r.date === date && (staffId === undefined || r.staffId === staffId)),
+      // 破損は日付・職員で絞り込めない（絞り込みに使う項目自体が読めないため）。
+      // 隠すと欠落に気づけないので、スコープに関わらず全件を返す。
+      unreadable,
+    };
   },
 
   async saveRecord(record: VisitRecord): Promise<void> {
@@ -106,8 +158,11 @@ export const localAdapter: DataAdapter = {
       throw new AdapterError('contract', '記録の内容が正しくありません。入力を確認してください。',
         parsed.violation.kind === 'shape' ? parsed.violation.message : 'schemaVersion 不一致');
     }
-    const all = readList(KEY.records, z.unknown()) as VisitRecord[];
-    writeRaw(KEY.records, upsert(all, parsed.value, 'visitId'));
+    // 読めた記録だけを書き戻すと破損が消える。実施記録は法定文書であり、
+    // 読めないからといって削除してよいものではないため、原文のまま持ち越す。
+    const { records, unreadableRaw } = readRecords();
+    const next = upsert(records, parsed.value, 'visitId');
+    writeRaw(KEY.records, [...next, ...unreadableRaw]);
   },
 
   async getPrefs(residentId: string): Promise<RecordPrefs> {
@@ -130,19 +185,6 @@ export const localAdapter: DataAdapter = {
     writeRaw(KEY.prefs, { ...current, [residentId]: parsed.data });
   },
 
-  async listIncidents(): Promise<Incident[]> {
-    return readList(KEY.incidents, incidentSchema);
-  },
-
-  async saveIncident(incident: Incident): Promise<void> {
-    const parsed = incidentSchema.safeParse(incident);
-    if (!parsed.success) {
-      throw new AdapterError('contract', '報告の内容が正しくありません。入力を確認してください。', z.prettifyError(parsed.error));
-    }
-    const all = readList(KEY.incidents, incidentSchema);
-    writeRaw(KEY.incidents, upsert(all, parsed.data, 'incidentId'));
-  },
-
   async listAuditLogs(): Promise<AuditLog[]> {
     return readList(KEY.auditLogs, auditLogSchema);
   },
@@ -157,13 +199,4 @@ export const localAdapter: DataAdapter = {
   },
 };
 
-/** 開発時にモックを初期状態へ戻す。Phase 5 では不要になる */
-export function resetLocalData(): void {
-  for (const k of Object.values(KEY)) {
-    try {
-      localStorage.removeItem(k);
-    } catch {
-      // 消せなくても致命的ではない
-    }
-  }
-}
+export { KEY as LOCAL_STORAGE_KEYS };

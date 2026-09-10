@@ -106,8 +106,26 @@ const RESIDENTS: ResidentBrief[] = RESIDENT_SEED.map((r) => ({
   carePlan: { ...blankCarePlan(), ...r.carePlan, planVersion: 1, planUpdatedAt: '2026-09-01T00:00:00.000Z' },
 }));
 
+/**
+ * 配信で渡す利用者情報は毎回コピーを返す。
+ * module スコープの配列をそのまま渡すと、UI 側が書き換えたときに
+ * 「配信元」が変わってしまい、法定文書系が閲覧のみである性質が
+ * 実装上は担保されなくなる。
+ */
+function cloneResident(r: ResidentBrief): ResidentBrief {
+  return {
+    ...r,
+    carePlan: {
+      ...r.carePlan,
+      adl: { ...r.carePlan.adl },
+      communication: [...r.carePlan.communication],
+      plannedTasks: [...r.carePlan.plannedTasks],
+    },
+  };
+}
+
 export function mockResidents(): ResidentBrief[] {
-  return RESIDENTS;
+  return RESIDENTS.map(cloneResident);
 }
 
 /**
@@ -117,8 +135,10 @@ export function mockResidents(): ResidentBrief[] {
  * 同じ密度になるようにしている。
  */
 export function mockDispatch(date: string, staffId: string): Dispatch | null {
+  // 存在しない職員は「配信が無い」ではなく不正な要求として扱う。
+  // 実在職員で配信0件のケース（emptyDispatch）と混同しないため。
   const staff = MOCK_STAFF.find((s) => s.staffId === staffId);
-  if (!staff) return null;
+  if (!staff) throw new Error(`存在しない職員です: ${staffId}`);
 
   const base = iso(new Date());
   const offset = [-1, 0, 1].find((n) => addDays(base, n) === date);
@@ -127,7 +147,7 @@ export function mockDispatch(date: string, staffId: string): Dispatch | null {
 
   // 配信対象は先頭3名のみ。legacy の STAFF.slice(0,3) と同じ
   const staffIndex = MOCK_STAFF.findIndex((s) => s.staffId === staffId);
-  if (staffIndex < 0 || staffIndex > 2) {
+  if (staffIndex > 2) {
     return emptyDispatch(date, staff.staffId, staff.name);
   }
 
@@ -166,7 +186,7 @@ export function mockDispatch(date: string, staffId: string): Dispatch | null {
     staffName: staff.name,
     visits,
     // 配信に載せる利用者は、その日の訪問に登場する分だけに絞る
-    residents: RESIDENTS.filter((r) => usedResidents.has(r.residentId)),
+    residents: RESIDENTS.filter((r) => usedResidents.has(r.residentId)).map(cloneResident),
     generatedAt: new Date().toISOString(),
   };
 }

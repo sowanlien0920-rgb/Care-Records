@@ -66,8 +66,11 @@ function DispatchProbe() {
     <div>
       <p className="hint">
         {plan.staffName} / {date} ／ 訪問 {plan.visits.length} 件 ／
-        利用者 {plan.residents.length} 名 ／ 記録 {records.data.length} 件 ／
+        利用者 {plan.residents.length} 名 ／ 記録 {records.data.records.length} 件 ／
         schemaVersion {plan.schemaVersion}
+        {records.data.unreadable.length > 0
+          ? ` ／ 読み出せない記録 ${records.data.unreadable.length} 件`
+          : ''}
       </p>
       {plan.visits.map((v) => {
         const resident = plan.residents.find((r) => r.residentId === v.residentId);

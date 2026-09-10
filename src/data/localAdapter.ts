@@ -8,14 +8,16 @@
  * には触れない。移行対象の実データは存在しないと確認済みのため、
  * 新しいキーで独立して開始する。
  */
-import { AdapterError, type DataAdapter, type RecordListing } from './adapter';
-import { MOCK_STAFF, mockDispatch } from './mock';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing } from './adapter';
+import { MOCK_STAFF, mockDispatch, mockDispatchDates, mockSeedRecords } from './mock';
 import { parseDispatch, parseVisitRecord, type Dispatch, type VisitRecord } from '../types/contract';
 import {
   auditLogSchema, recordPrefsSchema, blankRecordPrefs,
   type AuditLog, type RecordPrefs, type StaffAccount,
 } from '../types/local';
 import { z } from 'zod';
+import { iso } from '../utils/date';
+import { recordOf, todoStage } from '../domain/visitStatus';
 
 const NS = 'carerecords.v2';
 const KEY = {
@@ -105,6 +107,12 @@ function validateDispatch(raw: unknown): Dispatch {
  * 読めた分・読めなかった分・書き戻し用の原文を分けて返す。
  */
 function readRecords(): { records: VisitRecord[]; unreadable: RecordListing['unreadable']; unreadableRaw: unknown[] } {
+  // 初回のみデモ用の記録を蒔く。Phase 5 では不要になる。
+  // 「まだ何も保存していない」と「保存領域が読めない」を取り違えないよう、
+  // readRaw が null を返したときだけ行う（例外は素通しする）
+  if (readRaw(KEY.records) === null) {
+    writeRaw(KEY.records, mockSeedRecords());
+  }
   const all = readList(KEY.records, z.unknown());
   const records: VisitRecord[] = [];
   const unreadable: RecordListing['unreadable'] = [];
@@ -165,6 +173,35 @@ export const localAdapter: DataAdapter = {
     writeRaw(KEY.records, [...next, ...unreadableRaw]);
   },
 
+  /**
+   * バッジ件数。
+   *
+   * 統計とは数え方が違う点に注意する（legacy の非対称をそのまま写している）。
+   *   統計   : 表示中の職員の、表示中の1日
+   *   未完了 : ログイン中の職員の、今日以前すべて
+   *   未承認 : 全職員・全期間
+   * ログイン中の職員と表示中の職員は、サ責が他職員を表示したときに食い違う。
+   */
+  async getBadgeCounts(sessionStaffId: string): Promise<BadgeCounts> {
+    const { records } = readRecords();
+    const today = iso(new Date());
+
+    // 未完了: legacy/index.html:3255-3258（todoMine）と同じ。今日を含む今日以前のみ
+    let todo = 0;
+    for (const date of mockDispatchDates()) {
+      if (date > today) continue;
+      const d = mockDispatch(date, sessionStaffId);
+      if (d === null) continue;
+      for (const v of d.visits) {
+        if (todoStage(v, recordOf(v.visitId, records)) >= 0) todo += 1;
+      }
+    }
+
+    // 未承認: legacy/index.html:3463（pendReady）と同じ。職員でも日付でも絞らない
+    const pending = records.filter((r) => r.status === '済').length;
+
+    return { todo, pending };
+  },
   async getPrefs(residentId: string): Promise<RecordPrefs> {
     const raw = readRaw(KEY.prefs);
     if (raw === null) return blankRecordPrefs();

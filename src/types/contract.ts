@@ -69,7 +69,15 @@ export const serviceKindSchema = z.enum([
   '通院等乗降介助',
 ]);
 
-/** 実施記録の状態。legacy の status と一致させる */
+/**
+ * 実施記録の状態。legacy の status と一致させる。
+ *
+ * ── キャンセルの正は配信側にある ────────────────────────
+ * キャンセルは DispatchVisit.cancelled（kpi-react のルート表由来）と
+ * この 'キャンセル' の2箇所で表現しうる。正は配信側とする。
+ * 訪問の中止は事業所の判断であり、ルート表で管理されるため。
+ * 判定順は src/domain/visitStatus.ts の deriveStatus() に閉じてある。
+ */
 export const visitStatusSchema = z.enum([
   '未完', // 記録が未登録
   '済', // 記録あり・未承認

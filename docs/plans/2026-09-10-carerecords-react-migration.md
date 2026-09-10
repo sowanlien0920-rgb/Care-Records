@@ -576,7 +576,7 @@ Phase 1a の6ステップ。
 - [x] **1. 足場を作る** — legacy 退避 / Vite + React 19 + TS(strict) / ESLint / CSS 729行移送 / CLAUDE.md / .gitignore / README
 - [x] **2. 契約とアダプタを定義する** — contract.ts / local.ts / adapter.ts / localAdapter.ts / mock.ts / store / incidentAdapter
 - [x] **2r. reviewing-code の指摘対応** — 要修正3・推奨2・提案5 + ドメイン指摘4 を反映
-- [ ] 3. アプリシェルと簡易ログイン
+- [x] **3. アプリシェルと簡易ログイン** — StaffPicker / Header / DateBar / Toolbar / Stats / domain/visitStatus
 - [ ] 4. サービス実施一覧
 - [ ] 5. 記録モーダルと利用者マスタ
 - [ ] 6. 残りの画面
@@ -628,6 +628,28 @@ Context の定義を Provider と同じファイルに置くと Fast Refresh が
 - **ロール文字列が権限キーを兼ねている。** `canApprove` / `canViewAllStaff` が `'管理者'` / `'サービス提供責任者'` の日本語リテラルと一致で判定している。Phase 2 の Firestore ルールは `facility` / `supervisor` / `helper` の3ロールで設計する予定であり、この2組の対応表がどこにも無い。承認は法定要件に直結するので、ステップ3（簡易ログイン）で対応を明示的に持つ
 - **`StaffAccount` / `StaffRole` は Phase 3 で contract 側へ移す。** 職員とロールは Phase 3 以降 kpi-react が書き carerecords が読む情報になるため、`updating-contract` の判定基準では contract に属する。Phase 1a では簡易ログインのため local.ts に置いている
 
+**15. `src/domain/visitStatus.ts` を新設した（計画では Phase 1b の想定）**
+
+配信（予定）と実施記録（実績）から表示上の状態を導く判定が、統計・バッジ・一覧のすべてで必要になる。ステップ3の統計5枠を作る時点で要るため前倒しした。記載チェックなどの重いロジックは Phase 1b のままにしてある。
+
+**16. キャンセルの正を配信側に確定した（レビューで持ち越していた論点）**
+
+`DispatchVisit.cancelled`（kpi-react のルート表由来）を正とし、記録側の `'キャンセル'` より優先する。訪問の中止は事業所の判断であり、ルート表で管理されるため。判定は `deriveStatus()` 1箇所に閉じた。
+
+**17. ロール文字列と Firestore ルールのロールの対応表を追加した（レビュー推奨6）**
+
+`toRuleRole()` を `local.ts` に置き、`管理者 → facility` / `サービス提供責任者 → supervisor` / `訪問介護員 → helper` を1箇所に持つ。あわせて `canApprove` をロール判定からアカウントのフラグ判定に直した。legacy も同じで（`legacy/index.html:4124`）、サ責でも承認権限を持たない設定がありうる。
+
+**18. `StaffAccount` に `canApprove` を追加した**
+
+**19. `DataAdapter.getBadgeCounts()` を追加した**
+
+配信は 1日 × 1職員 で取るが、バッジは日付をまたいで数える必要があるため、取得経路を分けた。Phase 5 では Firestore のクエリになる。
+
+**20. `mockSeedRecords()` を追加した**
+
+配信には実施記録が含まれないため、モックだけでは全件が「未完」になり、済・完了の表示を確認できなかった。legacy の `seed()`（`:1665-1700`）と同じ分布（昨日＝承認済み、今日の過去分＝記録あり未承認）を再現する。legacy は開始時刻に乱数を使っていたが、検証を不安定にしないため固定にした。
+
 ### 実装中に気づいた点
 
 **レビューで判明した設計上の欠落4件（すべて対応済み）**
@@ -647,6 +669,28 @@ Context の定義を Provider と同じファイルに置くと Fast Refresh が
 **キャンセルの正が二重になっている（未対応）**
 
 `DispatchVisit.cancelled`（kpi-react 由来）と `VisitStatus = 'キャンセル'`（carerecords 由来）が両方あり、どちらが正か契約が規定していない。kpi-react 側でキャンセルされた訪問に carerecords 側で既に「済」の記録がある場合の扱いが未定。**ステップ4（サービス実施一覧）で状態の出し分けを作るときに決める必要がある。**
+
+**`.on` が無いと表示されないクラスが10種ある ← 移植の落とし穴**
+
+`.login` は `display:none` が既定で、`.on` が付いたときだけ表示される（`styles.css:537-546`）。legacy は `classList.add('on')` / `remove('on')` で出し入れしていた（`legacy/index.html:4161` / `:4178` / `:4453`）。React 側で `on` を付け忘れたところ、**マウントはしているのに画面が真っ白で、コンソールエラーも出なかった**。
+
+同じ作りのクラスは10種ある。`login` / `mask`（モーダル）/ `toast` / `fbtn`（フィルタの選択状態）/ `lg-err` / `lg-eye` / `acc-row` / `prow` / `okdot` / `mic-live`。**ステップ4（フィルタ）とステップ5（モーダル）で必ず踏む**ため、CLAUDE.md の鉄則5として追記した。
+
+**統計は「未完＋済＋完了」が「予定件数」と一致しない（legacy の仕様）**
+
+差はキャンセル件数だが、キャンセル件数を表示する枠は legacy にも無い（`.stat.cxl` の CSS 定義だけが残っており、対応する DOM が存在しない）。利用者からは「合計が合わない」状態に見える。**仕様を変えないため、そのまま移植した。**
+
+**実施時間の合計はキャンセルの訪問も加算する（legacy の仕様）**
+
+`renderStats()`（`legacy/index.html:1729-1733`）は状態でフィルタしていない。キャンセルでも実績時刻が入っていれば加算される。実施時間は請求の根拠になりうるので、**本来は妥当性を確認すべき箇所**だが、移植では仕様を変えていない。
+
+**統計とバッジで数える対象が違う（legacy の非対称）**
+
+- 統計: 表示中の職員 × 表示中の1日
+- 未完了バッジ: **ログイン中の**職員 × 今日以前すべて
+- 未承認バッジ: 全職員 × 全期間
+
+サ責が他職員を表示しても未完了バッジは変わらない。意図的な設計か実装の揺れかは判断できないが、移植では踏襲した。
 
 **契約の版と形は分けて検証する必要がある**
 

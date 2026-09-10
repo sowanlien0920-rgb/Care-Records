@@ -9,9 +9,9 @@
  * kpi-react 側の実フィールドは docs/plans/2026-09-10-carerecords-react-migration.md
  * の「## 3 既存の実装パターン」を参照。
  */
-import { SCHEMA_VERSION, type Dispatch, type DispatchVisit, type ResidentBrief, type ServiceKind } from '../types/contract';
+import { SCHEMA_VERSION, buildVisitRecord, type Dispatch, type DispatchVisit, type ResidentBrief, type ServiceKind, type VisitRecord } from '../types/contract';
 import type { StaffAccount } from '../types/local';
-import { addDays, fmt, iso, nowMin } from '../utils/date';
+import { addDays, fmt, iso, nowMin, toMin } from '../utils/date';
 
 export const MOCK_FACILITY_ID = 'mock-facility';
 
@@ -29,12 +29,18 @@ const TASKS = [
  * モックでも氏名ではなく ID で参照する形にしておく。
  */
 export const MOCK_STAFF: StaffAccount[] = [
-  { staffId: 's001', name: '中山 理恵', role: 'サービス提供責任者', active: true },
-  { staffId: 's002', name: '佐藤 健一', role: '訪問介護員', active: true },
-  { staffId: 's003', name: '鈴木 美咲', role: '訪問介護員', active: true },
-  { staffId: 's004', name: '田中 陽子', role: '訪問介護員', active: true },
-  { staffId: 's005', name: '大橋 直人', role: '管理者', active: true },
+  { staffId: 's001', name: '中山 理恵', role: 'サービス提供責任者', canApprove: true, active: true },
+  { staffId: 's002', name: '佐藤 健一', role: '訪問介護員', canApprove: false, active: true },
+  { staffId: 's003', name: '鈴木 美咲', role: '訪問介護員', canApprove: false, active: true },
+  { staffId: 's004', name: '田中 陽子', role: '訪問介護員', canApprove: false, active: true },
+  { staffId: 's005', name: '大橋 直人', role: '管理者', canApprove: true, active: true },
 ];
+
+/** 配信が存在する日。legacy の seed() が昨日・今日・明日を作るのに合わせる */
+export function mockDispatchDates(): string[] {
+  const base = iso(new Date());
+  return [-1, 0, 1].map((n) => addDays(base, n));
+}
 
 /**
  * 利用者。legacy/index.html:1646-1648 の USERS と seedProfiles() を合わせたもの。
@@ -202,6 +208,66 @@ function emptyDispatch(date: string, staffId: string, staffName: string): Dispat
     residents: [],
     generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * 初期の実施記録を生成する。
+ *
+ * 配信（予定）は kpi-react が持つが、実施記録は carerecords が書くものなので
+ * 配信には含まれない。ただし legacy の seed()（:1665-1700）は
+ * 「昨日は承認済み・今日の過去分は記録あり」というデモデータを作っていた。
+ * 状態ごとの表示を確認できるよう、同じ分布を再現する。
+ *
+ * legacy は開始時刻に乱数を混ぜていたが、検証を不安定にしないため固定にする。
+ */
+export function mockSeedRecords(): VisitRecord[] {
+  const today = iso(new Date());
+  const out: VisitRecord[] = [];
+
+  for (const date of mockDispatchDates()) {
+    for (const staff of MOCK_STAFF) {
+      const d = mockDispatch(date, staff.staffId);
+      if (d === null) continue;
+      for (const v of d.visits) {
+        if (v.cancelled) continue;
+        const past = date < today || (date === today && isPastVisit(date, v.endTime));
+        if (!past) continue;
+
+        const start = toMin(v.startTime);
+        const end = toMin(v.endTime);
+        if (start === null || end === null) continue;
+
+        // 昨日以前は承認済み、今日の過去分は記録ありで未承認。legacy と同じ分布
+        const approved = date < today;
+        out.push(buildVisitRecord({
+          visitId: v.visitId,
+          facilityId: MOCK_FACILITY_ID,
+          date,
+          staffId: staff.staffId,
+          residentId: v.residentId,
+          serviceName: v.serviceName,
+          plannedStart: v.startTime,
+          plannedEnd: v.endTime,
+          actualStart: fmt(start),
+          actualEnd: fmt(end),
+          tasks: TASKS.slice(0, 3),
+          vitals: { temperature: '', bloodPressure: '', pulse: '' },
+          // legacy の seed も特記事項を空にしている。記載チェックの対象になる
+          note: '',
+          status: approved ? '完了' : '済',
+          staffName: staff.name,
+          carePlanVersion: 1,
+          approvedBy: approved ? 's001' : null,
+          approvedByName: approved ? '中山 理恵' : null,
+          approvedAt: approved ? `${date}T18:00:00.000Z` : null,
+          createdBy: staff.staffId,
+          createdAt: `${date}T09:00:00.000Z`,
+          updatedAt: `${date}T09:00:00.000Z`,
+        }));
+      }
+    }
+  }
+  return out;
 }
 
 /** 実施済みとみなす時刻か。legacy の seed() の past 判定と同じ */

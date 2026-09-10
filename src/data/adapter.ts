@@ -53,6 +53,19 @@ export interface RecordListing {
   unreadable: Array<{ visitId: string | null; reason: string }>;
 }
 
+/**
+ * ツールバーのバッジ件数。
+ *
+ * 配信は 1日 × 1職員 で取るが、バッジは日付をまたいで数える必要があるため
+ * 取得経路を分ける。Phase 5 では Firestore のクエリになる。
+ */
+export interface BadgeCounts {
+  /** 未完了の訪問。ログイン中の職員の、今日以前の、記録が完成していない訪問 */
+  todo: number;
+  /** 未承認。全職員・全期間の「済」件数 */
+  pending: number;
+}
+
 export interface DataAdapter {
   // ── 職員（Phase 5 で Firebase Auth に置き換わる） ──────────
   listStaff(): Promise<StaffAccount[]>;
@@ -71,6 +84,12 @@ export interface DataAdapter {
    */
   listRecords(date: string, staffId?: string): Promise<RecordListing>;
   saveRecord(record: VisitRecord): Promise<void>;
+
+  /**
+   * バッジ件数。sessionStaffId は「ログイン中の職員」であり、
+   * 画面で表示中の職員とは異なりうる（サ責は他職員を表示できるため）。
+   */
+  getBadgeCounts(sessionStaffId: string): Promise<BadgeCounts>;
 
   // ── 記録支援設定（carerecords 固有） ──────────────────────
   getPrefs(residentId: string): Promise<RecordPrefs>;

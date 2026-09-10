@@ -29,6 +29,13 @@ export const staffAccountSchema = z.object({
   staffId: z.string().min(1),
   name: z.string().min(1),
   role: staffRoleSchema,
+  /**
+   * 承認権限。ロールから一意に決まらない。
+   * legacy は管理者を常に true とし、それ以外はアカウント単位のフラグで持つ
+   * （legacy/index.html:4121 canApproveAcc、:4371 の willApprove）。
+   * サービス提供責任者でも承認権限を持たない設定がありうる。
+   */
+  canApprove: z.boolean(),
   active: z.boolean(),
 });
 
@@ -85,12 +92,43 @@ export type RecordPrefs = z.infer<typeof recordPrefsSchema>;
 export type Incident = z.infer<typeof incidentSchema>;
 export type AuditLog = z.infer<typeof auditLogSchema>;
 
-/** 承認できるロールか。legacy/index.html:4121 の canApproveAcc と同じ判定 */
-export function canApprove(role: StaffRole): boolean {
-  return role === '管理者' || role === 'サービス提供責任者';
+/**
+ * Phase 2 の Firestore ルールで使うロール。
+ *
+ * carerecords の表示上のロール（日本語）と、アクセス制御で使うロールは別物になる。
+ * 日本語リテラルとの一致で権限を判定すると、表示ラベルを変えた瞬間に権限が壊れる。
+ * 対応表をここに1つだけ持ち、両者がずれないようにする。
+ */
+export type RuleRole = 'facility' | 'supervisor' | 'helper';
+
+const ROLE_TO_RULE: Record<StaffRole, RuleRole> = {
+  管理者: 'facility',
+  サービス提供責任者: 'supervisor',
+  訪問介護員: 'helper',
+};
+
+export function toRuleRole(role: StaffRole): RuleRole {
+  return ROLE_TO_RULE[role];
 }
 
-/** 他職員の記録を閲覧できるロールか。訪問介護員は自分の分のみ */
-export function canViewAllStaff(role: StaffRole): boolean {
-  return role === '管理者' || role === 'サービス提供責任者';
+/**
+ * 承認できるか。legacy/index.html:4124 の canApprove() と同じで、
+ * ロールではなくアカウントの canApprove フラグを見る。
+ * 承認者は記録に残す必要がある（法定要件）ため、判定を1箇所に閉じる。
+ */
+export function canApprove(account: StaffAccount | null): boolean {
+  return account !== null && account.canApprove;
+}
+
+/** 管理者か。legacy の isMgr() */
+export function isManager(account: StaffAccount | null): boolean {
+  return account !== null && account.role === '管理者';
+}
+
+/**
+ * サービス提供責任者以上か。legacy の isSup()。
+ * 職員切替・帳票・経過記録の可否がこれで決まる。
+ */
+export function isSupervisor(account: StaffAccount | null): boolean {
+  return account !== null && (account.role === '管理者' || account.role === 'サービス提供責任者');
 }

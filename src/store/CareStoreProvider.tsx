@@ -14,7 +14,7 @@
  * 条件が変わった直後に前の条件の結果が一瞬見えることもある。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AdapterError, type DataAdapter, type RecordListing } from '../data/adapter';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing } from '../data/adapter';
 import { CareStoreContext, type Async, type CareStore } from './context';
 import { localAdapter } from '../data/localAdapter';
 import { iso } from '../utils/date';
@@ -48,12 +48,14 @@ export function CareStoreProvider({
   adapter?: DataAdapter;
 }) {
   const [date, setDate] = useState(() => iso(new Date()));
+  const [session, setSession] = useState<StaffAccount | null>(null);
   const [staffId, setStaffId] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   const [staffKeyed, setStaffKeyed] = useState<Keyed<StaffAccount[]> | null>(null);
   const [dispatchKeyed, setDispatchKeyed] = useState<Keyed<Dispatch | null> | null>(null);
   const [recordsKeyed, setRecordsKeyed] = useState<Keyed<RecordListing> | null>(null);
+  const [badgesKeyed, setBadgesKeyed] = useState<Keyed<BadgeCounts> | null>(null);
 
   const [notification, setNotification] = useState<string | null>(null);
   // 通知を連続で出したとき、前のタイマーが後の通知を早期に消さないようにする。
@@ -72,6 +74,8 @@ export function CareStoreProvider({
 
   const staffKey = `${reloadToken}`;
   const scopedKey = `${reloadToken}|${date}|${staffId ?? ''}`;
+  // バッジはログイン中の職員が基準で、日付には依存しない
+  const badgeKey = `${reloadToken}|${session?.staffId ?? ''}`;
 
   // 職員一覧
   useEffect(() => {
@@ -102,6 +106,31 @@ export function CareStoreProvider({
     return () => { alive = false; };
   }, [adapter, date, staffId, scopedKey]);
 
+  // バッジ
+  useEffect(() => {
+    const me = session?.staffId;
+    if (me === undefined) return;
+    let alive = true;
+    adapter.getBadgeCounts(me)
+      .then((data) => { if (alive) setBadgesKeyed({ key: badgeKey, result: { status: 'ready', data } }); })
+      .catch((e) => { if (alive) setBadgesKeyed({ key: badgeKey, result: toAsyncError(e) }); });
+    return () => { alive = false; };
+  }, [adapter, session, badgeKey]);
+
+  const signIn = useCallback((id: string) => {
+    const found = staffKeyed?.result.status === 'ready'
+      ? staffKeyed.result.data.find((s) => s.staffId === id) ?? null
+      : null;
+    setSession(found);
+    // ログイン直後は自分の担当を表示する。legacy/index.html:4165 と同じ
+    setStaffId(found?.staffId ?? null);
+  }, [staffKeyed]);
+
+  const signOut = useCallback(() => {
+    setSession(null);
+    setStaffId(null);
+  }, []);
+
   const saveRecord = useCallback(async (record: VisitRecord): Promise<boolean> => {
     try {
       await adapter.saveRecord(record);
@@ -130,14 +159,22 @@ export function CareStoreProvider({
       : resolve(recordsKeyed, scopedKey)),
     [staffId, recordsKeyed, scopedKey],
   );
+  const badges = useMemo<Async<BadgeCounts>>(
+    () => (session === null
+      ? { status: 'ready', data: { todo: 0, pending: 0 } }
+      : resolve(badgesKeyed, badgeKey)),
+    [session, badgesKeyed, badgeKey],
+  );
 
   const value = useMemo<CareStore>(() => ({
     date, setDate,
+    session, signIn, signOut,
     staffId, setStaffId,
-    staff, dispatch, records,
+    staff, dispatch, records, badges,
     saveRecord, retry,
     notification, notify,
-  }), [date, staffId, staff, dispatch, records, saveRecord, retry, notification, notify]);
+  }), [date, session, signIn, signOut, staffId, staff, dispatch, records, badges,
+       saveRecord, retry, notification, notify]);
 
   return <CareStoreContext.Provider value={value}>{children}</CareStoreContext.Provider>;
 }

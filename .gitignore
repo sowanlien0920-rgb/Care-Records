@@ -10,6 +10,16 @@ Desktop.ini
 # Node
 node_modules/
 
+# ビルド成果物
+dist/
+!legacy/dist/
+*.tsbuildinfo
+
+# 環境変数
+.env
+.env.local
+.env.*.local
+
 # バックアップ・一時ファイル
 *.bak
 *.tmp

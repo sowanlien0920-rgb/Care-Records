@@ -1,0 +1,16 @@
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# エディタ
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# バックアップ・一時ファイル
+*.bak
+*.tmp
+~$*

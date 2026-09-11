@@ -57,6 +57,27 @@ function LintItem({ finding, onFix }: { finding: Finding; onFix?: () => void }) 
   );
 }
 
+/**
+ * 保存・生成・記載チェックに渡す前の整形。legacy/index.html:1967-1978 の collect と同じ。
+ *
+ * legacy は DOM から値を集める過程で trim し、様子は select の値を必ず書いていた。
+ * 通さないと「メモの末尾に空白があるだけで定型文の文型が変わる」「画面には
+ * 『いつもと変わりなし』が選ばれて見えるのに記録の様子は空のまま保存される」が起きる。
+ */
+function collect(d: VisitRecord): VisitRecord {
+  return {
+    ...d,
+    mood: d.mood || MOOD_DEFAULT,
+    memo: d.memo.trim(),
+    note: d.note.trim(),
+    vitals: {
+      temperature: d.vitals.temperature.trim(),
+      bloodPressure: d.vitals.bloodPressure.trim(),
+      pulse: d.vitals.pulse.trim(),
+    },
+  };
+}
+
 type FieldKey = 'plan' | 'actual';
 type FieldErrors = Partial<Record<FieldKey, string>>;
 
@@ -120,9 +141,29 @@ export function RecordModal() {
   useEffect(() => {
     if (residentId === null) return;
     let alive = true;
-    void getPrefs(residentId).then((p) => { if (alive) setPrefs({ key: residentId, value: p }); });
+    // 失敗したら既定値で進む。ResidentModal.tsx:48-55 と同じ。
+    // 握らないと prefs が null のままで、✨ が二度と押せなくなる
+    void getPrefs(residentId)
+      .then((p) => { if (alive) setPrefs({ key: residentId, value: p }); })
+      .catch(() => { if (alive) setPrefs({ key: residentId, value: blankRecordPrefs() }); });
     return () => { alive = false; };
   }, [residentId, getPrefs]);
+
+  /*
+   * 閉じるときに、その回だけの状態を捨てる。
+   *
+   * legacy は openModal で #lintBox を空にし（:1881）、undoStack を捨て（:1889）、
+   * バッジを保存済みの記録から出し直し（:1890-1895）、文体・分量を利用者の設定に
+   * 戻す（:1878-1879）。このコンポーネントは閉じてもアンマウントされないため、
+   * 残しておくと同じ訪問を開き直したときに前回の指摘や「元に戻す」が生きている。
+   */
+  const close = () => {
+    setLint(null);
+    setStyle(null);
+    setUndo(null);
+    setBadge(null);
+    closeRecord();
+  };
 
   if (editingVisitId === null || visit === null || plan === null) return null;
 
@@ -151,8 +192,9 @@ export function RecordModal() {
    */
   const srcBadge = badge !== null && badge.key === editingVisitId
     ? badge.text
-    : draft.note && (draft.noteSource === 'ai' || draft.noteSource === 'template')
-      ? `${draft.noteSource === 'ai' ? '✨ AI作成' : '📄 定型文で作成'}${draft.status === '完了' ? '（承認済）' : '（要確認）'}`
+    // 保存済みの記録から出す。編集中の状態セレクトで（要確認）↔（承認済）が入れ替わらないようにする
+    : saved !== undefined && saved.note && (saved.noteSource === 'ai' || saved.noteSource === 'template')
+      ? `${saved.noteSource === 'ai' ? '✨ AI作成' : '📄 定型文で作成'}${saved.status === '完了' ? '（承認済）' : '（要確認）'}`
       : '';
   const wasApproved = saved?.status === '完了';
   const sup = isSupervisor(session);
@@ -163,7 +205,7 @@ export function RecordModal() {
 
   /** legacy/index.html:1995-1999 と同じ検証と状態の自動遷移 */
   function validated(): { record: VisitRecord } | { errors: FieldErrors; focus: FieldKey } {
-    const d = draft;
+    const d = collect(draft);
     if (!d.plannedStart || !d.plannedEnd) {
       return { errors: { plan: '予定時間を入力してください' }, focus: 'plan' };
     }
@@ -251,7 +293,7 @@ export function RecordModal() {
     // 失敗しても閉じない。入力を失わせないため
     if (!ok) return;
     notify(approving ? `承認しました（承認者：${session?.name ?? ''}）` : '保存しました');
-    closeRecord();
+    close();
   }
 
   /*
@@ -266,7 +308,7 @@ export function RecordModal() {
     if (loadedPrefs === null || generating) return;
     setGenerating(true);
     try {
-      const text = await generateNote({ record: draft, plan: resident?.carePlan, prefs: { ...loadedPrefs, tone, length } });
+      const text = await generateNote({ record: collect(draft), plan: resident?.carePlan, prefs: { ...loadedPrefs, tone, length } });
       const next: VisitRecord = { ...draft, note: text, noteSource: 'template' };
       setUndo({ key: visitKey, note: draft.note, source: draft.noteSource });
       setEdit({ key: visitKey, draft: next });
@@ -289,7 +331,7 @@ export function RecordModal() {
     <Modal
       title={`${resident?.name ?? visit.residentId} 様`}
       subtitle={`${draft.date} ／ 担当：${staffName}`}
-      onClose={closeRecord}
+      onClose={close}
       footer={
         <>
           <button className="bt del" disabled={busy} onClick={() => { void (async () => {
@@ -299,7 +341,7 @@ export function RecordModal() {
             setBusy(true);
             const ok = await deleteRecord(visit.visitId);
             setBusy(false);
-            if (ok) { notify('削除しました'); closeRecord(); }
+            if (ok) { notify('削除しました'); close(); }
           })(); }}>削除</button>
           <button className="bt" disabled={busy} onClick={() => {
             set('status', 'キャンセル');
@@ -503,7 +545,7 @@ export function RecordModal() {
             <span className="dot"></span>🎤 音声入力
           </button>
           <button className="ghost" id="lintBtn" aria-controls="lintBox"
-            onClick={() => setLint({ key: visit.visitId, list: check(draft, resident?.carePlan) })}>📋 記載チェック</button>
+            onClick={() => setLint({ key: visit.visitId, list: check(collect(draft), resident?.carePlan) })}>📋 記載チェック</button>
           {/* legacy は undoStack があるときだけ表示する（:2734 / :2754-2759） */}
           {undoable !== null && (
             <button className="ghost" id="undoBtn" onClick={() => {

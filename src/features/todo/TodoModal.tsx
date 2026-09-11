@@ -19,6 +19,7 @@ import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
 import { isSupervisor } from '../../types/local';
 import { todoStage } from '../../domain/visitStatus';
+import { MOOD_DEFAULT, MOOD_OPTIONS } from '../../domain/vocabulary';
 import { iso } from '../../utils/date';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
@@ -32,12 +33,20 @@ function dowOf(s: string): string {
 export function TodoModal() {
   const {
     panel, closePanel, visitRows, session, notify, retry,
-    openRecord, setDate, setStaffId, stampStartAt, stampEndAt,
+    openRecord, setDate, setStaffId, stampStartAt, stampEndAt, updateRecordFields,
   } = useCareStore();
   const sup = isSupervisor(session);
   const [scope, setScope] = useState<'me' | 'all'>('me');
   const [range, setRange] = useState<'today' | 'only' | 'all'>('today');
   const [kind, setKind] = useState<'all' | '0' | '1' | '2'>('all');
+  /*
+   * 打鍵中のメモ。visitId ごとに持つ。
+   *
+   * 保存は onBlur でだけ行う。保存に成功すると dispatch / records / visitRows /
+   * badges / staff / incidents が全部取り直されるため、1文字ごとに保存すると
+   * 打つたびに全件再取得が走り、入力中の行ごと再描画されることになる
+   */
+  const [memoDraft, setMemoDraft] = useState<Record<string, string>>({});
 
   if (panel !== 'todo') return null;
 
@@ -55,6 +64,23 @@ export function TodoModal() {
     if (range === 'only' && r.date !== today) return false;
     return true;
   }).sort((a, b) => (a.date + a.visit.startTime).localeCompare(b.date + b.visit.startTime));
+
+  /**
+   * メモを保存する。変わっていなければ何もしない。
+   * 保存できたら下書きを捨て、取り直した記録の値に戻す。
+   * 失敗したら下書きを残す（打った内容を消さない）
+   */
+  async function saveMemo(visitId: string, saved: string) {
+    const draft = memoDraft[visitId];
+    if (draft === undefined || draft === saved) return;
+    const ok = await updateRecordFields(visitId, { memo: draft });
+    if (!ok) return;
+    setMemoDraft((m) => {
+      const next = { ...m };
+      delete next[visitId];
+      return next;
+    });
+  }
 
   const counts = [0, 0, 0];
   list.forEach((r) => { const st = todoStage(r.visit, r.record); if (st >= 0 && st <= 2) counts[st] = (counts[st] ?? 0) + 1; });
@@ -150,14 +176,16 @@ export function TodoModal() {
                   {/* ステージ2の行だけ 7番目の子として付く。grid-column:1/-1 で折り返す */}
                   {st === 2 && (
                     <div className="todo-inline">
-                      <select title="ご本人の様子" defaultValue="いつもと変わりなし"
-                        onChange={() => notify('ご本人の様子の保存は Phase 1b で実装します')}>
-                        <option>いつもと変わりなし</option><option>体調良好・表情明るい</option>
-                        <option>やや元気がない</option><option>痛みの訴えあり</option>
+                      {/* 選択肢は記録モーダルと同じ MOOD_OPTIONS。別々に書くと片方だけ増えて静かにずれる */}
+                      <select title="ご本人の様子" value={r.record?.mood || MOOD_DEFAULT}
+                        onChange={(e) => { void updateRecordFields(r.visit.visitId, { mood: e.target.value }); }}>
+                        {MOOD_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
                       </select>
                       <div className="memowrap">
                         <input className="memo" placeholder="メモ（任意）例：昼食を半分残された／膝の痛みの訴えあり"
-                          onChange={() => { /* Phase 1b でメモを保存する */ }} />
+                          value={memoDraft[r.visit.visitId] ?? r.record?.memo ?? ''}
+                          onChange={(e) => setMemoDraft((m) => ({ ...m, [r.visit.visitId]: e.target.value }))}
+                          onBlur={() => { void saveMemo(r.visit.visitId, r.record?.memo ?? ''); }} />
                         <button className="micmini" title="メモを音声入力"
                           onClick={() => notify('音声入力は Phase 1b で実装します')}>🎤</button>
                       </div>

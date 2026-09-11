@@ -28,10 +28,14 @@ src/
   types/      contract.ts  ← kpi-react との共有契約。変更は updating-contract スキルで
               local.ts     ← carerecords 固有の型
   data/       adapter.ts / localAdapter.ts / mock.ts   ← 永続化の境界
+  domain/     compliance.ts（記載チェック）/ noteBuilder.ts（定型文生成）/
+              aggregate.ts（帳票の集計・提供分数）/ visitStatus.ts / timeValidation.ts / vocabulary.ts
+              ← React に依存しない純粋関数だけを置く
   store/      CareStoreProvider.tsx / useCareStore.ts
+  hooks/      useSpeechInput.ts   ← React に依存する共有ロジック。domain には置けない
   features/   auth / shell / visitList / record / resident / approval / report / timeline / incident
   components/ 共通コンポーネント
-  utils/
+  utils/      date.ts / csv.ts
   styles.css  ← legacy から移した 729行。書き換えない
 legacy/       ← 移行元の単一HTML実装。突き合わせ用。削除しない
 画面キャプチャ/ ← 各画面のスクリーンショット。見た目の基準

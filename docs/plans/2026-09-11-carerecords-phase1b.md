@@ -1136,6 +1136,12 @@ legacy と一致しないことが**確定している**箇所。突き合わせ
 | `src/store/context.ts` | `RecordFieldPatch` 型と `updateRecordFields(visitId, patch)` を `CareStore` に追加 |
 | `src/store/CareStoreProvider.tsx` | `updateRecordFields` を既存 `mutateRecord` の薄い包みとして実装し `value` に公開 |
 
+**kpi-react 側への同期（`updating-contract` の手順5）**:
+Phase 4 で `contract.ts` を kpi-react へコピーするとき、**v2 の形（`mood` / `memo` / `noteSource` の3値）で
+コピーする**こと。`mood` / `memo` は carerecords が書き kpi-react は読まないので、kpi-react 側の
+読み取りコードに変更は要らない。`schemaVersion` の照合だけは必ず通す。
+**この場では kpi-react を変更していない。**
+
 **`resetLocalData()` の実行**: 開発用ブラウザの `localStorage` は**依頼者の環境でのみ消せる**ため、
 実装側からは実行していない（下の「実装中に気づいた点」2 を参照）。
 headless ブラウザ（空のプロファイル = リセット後と同じ状態）で起動を確認し、

@@ -92,7 +92,8 @@ export function VisitRow({
           {tasks.length > 3 && <span className="tag">+{tasks.length - 3}</span>}
         </div>
         {record?.note
-          ? <div className="note">{record.noteSource === 'ai' ? '✨' : '📝'} {record.note}</div>
+          // 'template'（定型文で作成）も生成物なので ✨ 側。人が書いたものだけ 📝 になる
+          ? <div className="note">{record.noteSource === 'ai' || record.noteSource === 'template' ? '✨' : '📝'} {record.note}</div>
           : null}
       </div>
 

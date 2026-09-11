@@ -1118,7 +1118,7 @@ legacy と一致しないことが**確定している**箇所。突き合わせ
 
 - [x] **1. 契約の版上げと境界の整備**（`updating-contract` に従って実施）
 - [x] **2. 記載チェック**
-- [ ] 3. 定型文生成
+- [x] **3. 定型文生成**
 - [ ] 4. 未完了一覧と一括作成
 - [ ] 5. 音声入力
 - [ ] 6. 集計と CSV
@@ -1161,6 +1161,32 @@ headless ブラウザ（空のプロファイル = リセット後と同じ状�
 空本文 → warn 1件 ／ 違反まみれの本文 → ng 3件 + warn 3件が legacy と同じ順序・文言で描画 ／
 自動修正で本文が置換され再判定される ／ `.lintitem > .ic + div > b + 全角スペース + 本文` の
 DOM が legacy と一致 ／ 問題なしのときは `.lv-ok` の1行。
+
+### ステップ2の突き合わせ結果（`parity-checker`）
+
+判定17種の正規表現・レベル・文言・順序・閾値、`.lintitem` の DOM とアイコン（`✕` U+2715 /
+`!` / `✓` U+2713）と全角スペース、承認 confirm の文面、保存時の描画→中断は**すべて一致**。
+未実装は0件。指摘6件のうち、ステップ2で入れた2件を直した（コミット `827c9a8`）。
+
+- **直した**: 予定開始だけ未入力のとき legacy は `null` が 0 に化けて実績差の warn を出す。同じ結果になるよう引き算を写した
+- **直した**: 承認時の confirm を `flushSync` 後に出し、legacy と同じく指摘一覧を描いてからダイアログを開くようにした
+- **直さない（Phase 1a 由来）**: 承認時に `validated()` が先に走るため、予定未入力では記載チェックに到達しない（legacy は到達する）／保存中断の伝達がトーストではなく実績欄のフィールドエラー
+- **直さない（内部のみ）**: `.fixbtn` の `data-fix` 属性を持たない（React はハンドラ直付け）
+- **追加した a11y**: `#lintBtn` の `aria-controls="lintBox"`（意図的差分の申告漏れ。ここに記録する）
+
+### ステップ3の内容（2026-09-11）
+
+| ファイル | 変更 |
+|---|---|
+| `src/domain/noteBuilder.ts` | **新規。** `buildNote()`（8ブロック）/ `generateNote()` / `TASK_PHRASE` / `TASK_ADL` / `MOOD_PHRASE` / `ALERT_MOODS` |
+| `src/features/record/RecordModal.tsx` | 不足 DOM（`#srcBadge` / `.aibar` の select 3つ / `#undoBtn` / `.memowrap`+`#fMemo`+`#micMemo` / `#aiHint`）を legacy の並び順で追加。`RecordPrefs` の取得、生成、元に戻す、`noteSource` の書き込み |
+| `src/features/visitList/VisitRow.tsx` | `'template'` も ✨ 側にした（Q7 の表。計画書の変更対象ファイルには無かった） |
+
+**動作確認**（headless ブラウザ、コンソールエラー0）: `.sec` の直下が
+`h3 → #profBar → .aibar → .memowrap → .fld → #lintBox → #aiHint` の順で legacy と一致
+（`#micLive` はステップ5で `.fld` と `#lintBox` の間に入る）。
+`normal` / `long`+`plain` / `short` で出るブロックが早見表どおりに変わり、
+様子・メモ・ADL・留意事項・短期目標・提供分数が本文に入ることを確認した。
 
 ### 計画から外れた点
 
@@ -1208,6 +1234,19 @@ legacy は新規予定の下書きにだけ `mood: MOODS[0]` を入れる（`:18
 ['carerecords.v2.visitRecords','carerecords.v2.recordPrefs','carerecords.v2.auditLogs',
  'carerecords.v2.session','carerecords.v2.incidents'].forEach(k => localStorage.removeItem(k));
 ```
+
+**2a. legacy は記録モーダルから生成しても `noteSrc` を書いていない**（`:2720-2753`）。
+そのため legacy では、モーダルで生成して保存した記録は開き直すとバッジが消え、一覧でも 📝（手書き）
+扱いになり、学習の重み付けでも「人が書いたもの」に数えられていた。
+**Q7 の確定により、ここは直して `'template'` を書く**（鉄則6 を適用しない箇所が1件増えた）。
+
+**2b. `元に戻す` のあとのバッジの扱いが legacy と変わる。**
+legacy は `#srcBadge` を無条件に隠す（`:2757`）。React は本文の出所（`noteSource`）から
+バッジを導くため、**定型文で作った過去の本文に戻ると「📄 定型文で作成（要確認）」が出たまま**になる。
+手入力の本文に戻れば消える。`noteSource` を書くようにした以上、こちらのほうが記録と表示が一致する。
+
+**2c. legacy の `元に戻す` は記載チェックを再実行しない**（`:2754-2759`）。
+生成後の本文に対する指摘が `#lintBox` に残る。React も同じにしてある。
 
 **3a. legacy の記載チェックには、移植しても再現できない副作用が3つある**（いずれも再現しない）。
 - `runLint()` が `collect()` を呼ぶため、**「記載チェック」ボタンを押すだけでフォーム全項目が

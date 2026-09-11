@@ -16,15 +16,16 @@
  * Modal 側でフォーカストラップ・Esc・復帰・role="dialog" を実装し、
  * ここではフィールド単位のエラー表示と、失敗時に入力を失わないことを担保する。
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
-import { canApprove, isSupervisor } from '../../types/local';
+import { blankRecordPrefs, canApprove, isSupervisor, type RecordPrefs } from '../../types/local';
 import { newRecordFor, recordOf } from '../../domain/visitStatus';
 import { clampToPlan, nowHM } from '../../domain/timeValidation';
 import { check, outOfPlan, NO_ISSUE_FINDING, type Finding } from '../../domain/compliance';
-import { SERVICE_OPTIONS, TASK_OPTIONS } from '../../domain/vocabulary';
+import { generateNote } from '../../domain/noteBuilder';
+import { MOOD_DEFAULT, MOOD_OPTIONS, SERVICE_OPTIONS, TASK_OPTIONS } from '../../domain/vocabulary';
 import { toMin } from '../../utils/date';
 import type { ServiceKind, VisitRecord, VisitStatus } from '../../types/contract';
 
@@ -73,7 +74,7 @@ function clearError(errors: FieldErrors, key: FieldKey): FieldErrors {
 export function RecordModal() {
   const {
     editingVisitId, closeRecord, dispatch, records, session, staff,
-    saveRecord, deleteRecord, openResident, notify,
+    saveRecord, deleteRecord, openResident, getPrefs, notify,
   } = useCareStore();
 
   const plan = dispatch.status === 'ready' ? dispatch.data : null;
@@ -93,13 +94,41 @@ export function RecordModal() {
    * 下書きと同じく「どの訪問を開いているか」をキーにして持ち、開き直しで消えるようにする。
    */
   const [lint, setLint] = useState<{ key: string; list: Finding[] } | null>(null);
+  /*
+   * 記録支援設定。法定文書ではないので carerecords が持つ（types/local.ts）。
+   * 記録モーダルからは Phase 1a まで一度も読んでいなかったが、定型文生成が
+   * 文体と分量をここから取る。取得できるまで ✨ は押せない
+   */
+  const [prefs, setPrefs] = useState<{ key: string; value: RecordPrefs } | null>(null);
+  /** 文体・分量の一時変更。legacy も保存せず、その回の生成にだけ効く（:1877-1879 / :2722） */
+  const [style, setStyle] = useState<{ key: string; tone: RecordPrefs['tone']; length: RecordPrefs['length'] } | null>(null);
+  /** 生成前の本文。legacy の undoStack は1段だけ持つ（:2203） */
+  const [undo, setUndo] = useState<{ key: string; note: string; source: VisitRecord['noteSource'] } | null>(null);
+  /** 生成直後に出す出所バッジ。保存済みの記録から出すぶんは noteSource から導く */
+  const [badge, setBadge] = useState<{ key: string; text: string } | null>(null);
+  const [generating, setGenerating] = useState(false);
   const planRef = useRef<HTMLInputElement>(null);
   const actualRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
 
+  /*
+   * 記録支援設定を取りに行く。ResidentModal.tsx:48-55 と同じ形にしてある。
+   * クリーンアップで alive を落とさないと、利用者を切り替えた直後に
+   * 前の利用者の設定が届いて上書きする
+   */
+  const residentId = visit?.residentId ?? null;
+  useEffect(() => {
+    if (residentId === null) return;
+    let alive = true;
+    void getPrefs(residentId).then((p) => { if (alive) setPrefs({ key: residentId, value: p }); });
+    return () => { alive = false; };
+  }, [residentId, getPrefs]);
+
   if (editingVisitId === null || visit === null || plan === null) return null;
 
-  const saved = recordOf(visit.visitId, recs);
+  // 関数の中から参照する分は const に取り出す。visit の絞り込みはクロージャまで届かない
+  const visitKey = visit.visitId;
+  const saved = recordOf(visitKey, recs);
   // キーが変われば保存済みの記録（無ければ配信からの初期値）に戻る
   const draft: VisitRecord = edit !== null && edit.key === editingVisitId
     ? edit.draft
@@ -111,6 +140,20 @@ export function RecordModal() {
     setEdit({ key: visit.visitId, draft: fn(draft) });
 
   const findings = lint !== null && lint.key === editingVisitId ? lint.list : null;
+  const loadedPrefs = prefs !== null && prefs.key === visit.residentId ? prefs.value : null;
+  const tone = style !== null && style.key === editingVisitId ? style.tone : loadedPrefs?.tone ?? blankRecordPrefs().tone;
+  const length = style !== null && style.key === editingVisitId ? style.length : loadedPrefs?.length ?? blankRecordPrefs().length;
+  const undoable = undo !== null && undo.key === editingVisitId ? undo : null;
+  /*
+   * 出所バッジ。legacy/index.html:1890-1895 は保存済みの記録に対して
+   * 「✨ AI作成（要確認）」「📄 定型文で作成（承認済）」を出し、生成直後は
+   * 「📄 定型文で作成」に差し替える。手入力（manual / null）では出さない
+   */
+  const srcBadge = badge !== null && badge.key === editingVisitId
+    ? badge.text
+    : draft.note && (draft.noteSource === 'ai' || draft.noteSource === 'template')
+      ? `${draft.noteSource === 'ai' ? '✨ AI作成' : '📄 定型文で作成'}${draft.status === '完了' ? '（承認済）' : '（要確認）'}`
+      : '';
   const wasApproved = saved?.status === '完了';
   const sup = isSupervisor(session);
   const frame = toMin(draft.plannedStart) !== null && toMin(draft.plannedEnd) !== null
@@ -209,6 +252,33 @@ export function RecordModal() {
     if (!ok) return;
     notify(approving ? `承認しました（承認者：${session?.name ?? ''}）` : '保存しました');
     closeRecord();
+  }
+
+  /*
+   * 特記事項を作る。legacy/index.html:2731-2735 の定型文経路と同じ順序で、
+   * 本文を入れ替え → 元に戻すを出す → バッジ → 記載チェック → トースト。
+   *
+   * legacy と違い noteSource に 'template' を書く。legacy の genBtn は
+   * noteSrc を設定せず（:2720-2753）、保存して開き直すとバッジが消え、
+   * 一覧でも手書き扱いになっていた（計画書 Q7）。
+   */
+  async function generate() {
+    if (loadedPrefs === null || generating) return;
+    setGenerating(true);
+    try {
+      const text = await generateNote({ record: draft, plan: resident?.carePlan, prefs: { ...loadedPrefs, tone, length } });
+      const next: VisitRecord = { ...draft, note: text, noteSource: 'template' };
+      setUndo({ key: visitKey, note: draft.note, source: draft.noteSource });
+      setEdit({ key: visitKey, draft: next });
+      setBadge({ key: visitKey, text: '📄 定型文で作成' });
+      setLint({ key: visitKey, list: check(next, resident?.carePlan) });
+      notify('特記事項を作成しました');
+    } catch {
+      // 生成はローカルで完結するので通常は失敗しない。Phase 5 で外部呼び出しになる
+      notify('特記事項を作成できませんでした。');
+    } finally {
+      setGenerating(false);
+    }
   }
 
   const staffName = staff.status === 'ready'
@@ -388,7 +458,8 @@ export function RecordModal() {
 
       {/* 6. 特記事項 */}
       <div className="sec">
-        <h3>特記事項</h3>
+        {/* legacy/index.html:945。.srcbadge は h3 の中に置く（.sec>h3 は直下子セレクタ） */}
+        <h3>特記事項 {srcBadge && <span className="srcbadge" id="srcBadge">{srcBadge}</span>}</h3>
         <div className="profbar" id="profBar">
           {resident !== undefined && (
             <>
@@ -402,8 +473,30 @@ export function RecordModal() {
             </>
           )}
         </div>
+        {/*
+          * legacy/index.html:946-962。select は .aibar の直下に置く。
+          * .aibar select（styles.css:263）が枠線と背景を与えており、
+          * .fld の中に移すと見た目が変わる
+          */}
         <div className="aibar">
-          <button className="aibtn" onClick={() => notify('AIによる文章作成は Phase 1b で実装します')}>
+          <select id="fMood" title="本人の様子" value={draft.mood || MOOD_DEFAULT}
+            onChange={(e) => set('mood', e.target.value)}>
+            {MOOD_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <select id="fTone" title="文体" value={tone}
+            onChange={(e) => setStyle({ key: visit.visitId, tone: e.target.value as RecordPrefs['tone'], length })}>
+            <option value="polite">です・ます調</option>
+            <option value="plain">である調（簡潔）</option>
+          </select>
+          <select id="fLen" title="分量" value={length}
+            onChange={(e) => setStyle({ key: visit.visitId, tone, length: e.target.value as RecordPrefs['length'] })}>
+            <option value="short">簡潔（1〜2文）</option>
+            <option value="normal">標準（2〜3文）</option>
+            <option value="long">詳しく（3〜4文）</option>
+          </select>
+          {/* .sp は .aibtn.busy のときだけ出る（styles.css:274-275）。span を外すとスピナーが消える */}
+          <button className="aibtn" id="genBtn" disabled={loadedPrefs === null || generating}
+            onClick={() => { void generate(); }}>
             <span className="sp"></span>✨ AIで文章作成
           </button>
           <button className="micbtn" onClick={() => notify('音声入力は Phase 1b で実装します')}>
@@ -411,12 +504,32 @@ export function RecordModal() {
           </button>
           <button className="ghost" id="lintBtn" aria-controls="lintBox"
             onClick={() => setLint({ key: visit.visitId, list: check(draft, resident?.carePlan) })}>📋 記載チェック</button>
+          {/* legacy は undoStack があるときだけ表示する（:2734 / :2754-2759） */}
+          {undoable !== null && (
+            <button className="ghost" id="undoBtn" onClick={() => {
+              setEdit({ key: visit.visitId, draft: { ...draft, note: undoable.note, noteSource: undoable.source } });
+              setUndo(null);
+              setBadge(null);
+              notify('元に戻しました');
+            }}>元に戻す</button>
+          )}
+        </div>
+        {/* .micmini は position:absolute。.memowrap（position:relative）の直下に置く */}
+        <div className="memowrap">
+          <input className="memo" id="fMemo" placeholder="メモ（任意・箇条書き可）例：昼食を半分残された／左膝の痛みの訴えあり"
+            value={draft.memo} onChange={(e) => set('memo', e.target.value)} />
+          <button className="micmini" id="micMemo" title="メモを音声入力"
+            onClick={() => notify('音声入力は Phase 1b で実装します')}>🎤</button>
         </div>
         <div className="fld">
           <label htmlFor="fNote">特記事項</label>
           {/* id を外すと #fNote{min-height:118px}（styles.css:242）が効かなくなる */}
           <textarea id="fNote" ref={noteRef} placeholder="ご本人の状態、申し送り事項など" value={draft.note}
-            onChange={(e) => set('note', e.target.value)} />
+            onChange={(e) => {
+              // 人が書いた本文であることを記録に残す。legacy は noteSrc を書く経路が
+              // 一括作成と未完了一覧にしか無く、手入力は常に未設定のままだった
+              setEdit({ key: visit.visitId, draft: { ...draft, note: e.target.value, noteSource: 'manual' } });
+            }} />
         </div>
         {/*
           * legacy は .lint の直下に .lintitem を並べる（:2399-2404）。
@@ -441,6 +554,8 @@ export function RecordModal() {
               }} />
             )))}
         </div>
+        {/* legacy/index.html:1897。AI に切り替えるのは Phase 5（決定 H）なので定型文側の文言を出す */}
+        <div className="aihint" id="aiHint">定型文で作成します。⚙設定からClaude AIに切り替えられます。</div>
       </div>
     </Modal>
   );

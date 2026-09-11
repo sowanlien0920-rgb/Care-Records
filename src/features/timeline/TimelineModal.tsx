@@ -5,13 +5,14 @@
  * （styles.css:513-520）。`.tlrow:last-child` で最終行の境界線を消している。
  *
  * legacy の仕様として、キャンセルは除外し、未完・済・完了はすべて含む。
- * 並びは新しい順。まとめ生成（AI）は Phase 1b。
+ * 並びは新しい順。まとめ生成（AI）は Phase 5（Cloud Functions 経由）で扱う。
  */
 import { useState } from 'react';
 import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
+import { minutesOf } from '../../domain/aggregate';
 import { deriveStatus } from '../../domain/visitStatus';
-import { iso, toMin } from '../../utils/date';
+import { iso } from '../../utils/date';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
@@ -58,7 +59,7 @@ export function TimelineModal() {
             </select></div>
           <div className="fld"><label>&nbsp;</label>
             <button className="aibtn" style={{ width: '100%', justifyContent: 'center' }}
-              onClick={() => notify('経過のまとめは Phase 1b で実装します')}>
+              onClick={() => notify('経過のまとめは Phase 5（AI 接続）で実装します')}>
               <span className="sp"></span>✨ 経過をまとめる</button></div>
         </div>
         <div className="profbar" style={{ marginTop: 12 }}>
@@ -89,9 +90,8 @@ export function TimelineModal() {
             : list.map((r) => {
               const a = r.record?.actualStart || r.visit.startTime;
               const b = r.record?.actualEnd || r.visit.endTime;
-              const s = toMin(r.record?.actualStart ?? '');
-              const e = toMin(r.record?.actualEnd ?? '');
-              const min = s !== null && e !== null && e > s ? e - s : 0;
+              // 提供分数の式は帳票と1つにしてある。別々に書くと画面ごとに数字がずれる
+              const min = minutesOf(r.record);
               const d = new Date(`${r.date}T00:00:00`);
               return (
                 // 直下は div 2個。.tlrow の2カラムグリッドがこれに依存する

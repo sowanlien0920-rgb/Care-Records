@@ -20,7 +20,7 @@ import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
 import { check, countNg } from '../../domain/compliance';
 import { generateNote } from '../../domain/noteBuilder';
-import { deriveStatus } from '../../domain/visitStatus';
+import { deriveStatus, newRecordFor } from '../../domain/visitStatus';
 import { blankRecordPrefs, isSupervisor, type RecordPrefs } from '../../types/local';
 import type { VisitRow } from '../../data/adapter';
 
@@ -112,8 +112,13 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
       if (abortRef.current) break;
       setStates((m) => ({ ...m, [r.visit.visitId]: { st: 'run' } }));
       try {
-        const record = r.record;
-        if (record === undefined) throw new Error('記録がありません');
+        /*
+         * 「実績時間が未入力の予定も対象にする」を選ぶと、まだ記録が1件も無い訪問が
+         * 対象に入る。legacy は予定と記録が同じオブジェクトなので常に生成できた。
+         * 保存側（updateRecordFields）も記録が無ければ配信から作るので、
+         * 生成の入力も同じ初期値から作る
+         */
+        const record = r.record ?? newRecordFor(r.visit, r, r.resident);
         const prefs = await getPrefs(r.visit.residentId).catch(() => blankRecordPrefs());
         const used: RecordPrefs = styleMode === 'fix' ? { ...prefs, tone, length } : prefs;
         const text = await generateNote({ record, plan: r.resident?.carePlan, prefs: used });
@@ -204,9 +209,19 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
         <h3>対象一覧 <span className="bchip" id="bCount">{shown.length}件</span></h3>
         <div className="bprog"><div className="bar" id="bBar" style={{ width: `${pct}%` }}></div></div>
         <div className="plist" id="bList">
-          {shown.length === 0
-            ? <div className="empty" style={{ padding: 26 }}><div className="ico">✓</div>
-              <p>条件に合う記録はありません。<br />条件を変えるか、日付・職員を切り替えてください。</p></div>
+          {/* 取得できていないことを「対象0件」と同じ見た目にすると、作成漏れに気づけない */}
+          {visitRows.status === 'loading' && (
+            <div className="empty" style={{ padding: 26 }}><div className="ico">⏳</div><p>読み込んでいます…</p></div>
+          )}
+          {visitRows.status === 'error' && (
+            <div className="empty" style={{ padding: 26 }}><div className="ico">⚠️</div><p>{visitRows.message}</p></div>
+          )}
+          {visitRows.status === 'ready' && (shown.length === 0
+            ? (
+              <div className="empty" style={{ padding: 26 }}><div className="ico">✓</div>
+                <p>条件に合う記録はありません。<br />条件を変えるか、日付・職員を切り替えてください。</p>
+              </div>
+            )
             : shown.map((r) => {
               const s = states[r.visit.visitId] ?? { st: 'wait' };
               return (
@@ -232,7 +247,7 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
                   </span>
                 </div>
               );
-            })}
+            }))}
         </div>
       </div>
     </Modal>

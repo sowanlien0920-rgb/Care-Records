@@ -94,7 +94,16 @@ export function useSpeechInput() {
     onRef.current = false;
     const rec = recRef.current;
     if (rec !== null) {
+      /*
+       * ハンドラを先に外す。onend は自分のインスタンスを閉包で掴んでいるため、
+       * 外さないと「別のボタンに切り替えた直後に古い認識器が復活する」
+       * （切り替えでは stop の直後に onRef が true に戻るため）
+       */
+      rec.onend = null;
+      rec.onresult = null;
+      rec.onerror = null;
       try { rec.stop(); } catch { /* 停止済みでも問題ない */ }
+      recRef.current = null;
     }
     targetRef.current = null;
     setListening(null);

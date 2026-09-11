@@ -13,6 +13,8 @@ import { useState } from 'react';
 import { useCareStore } from '../../store/useCareStore';
 import { BulkNoteModal } from './BulkNoteModal';
 import { deriveStatus, recordOf } from '../../domain/visitStatus';
+import { minutesOf } from '../../domain/aggregate';
+import { downloadCsv, toCsv } from '../../utils/csv';
 import { canApprove } from '../../types/local';
 import { toMin } from '../../utils/date';
 import { Filters } from './Filters';
@@ -35,7 +37,35 @@ export function VisitList() {
     ? sorted
     : sorted.filter((v) => deriveStatus(v, recordOf(v.visitId, recs)) === filter);
 
-  const later = (name: string) => () => notify(`${name}はステップ6で実装します`);
+  const later = (name: string) => () => notify(`${name}は Phase 1c 以降で実装します`);
+
+  /*
+   * 日次の実施記録 CSV。legacy/index.html:1836-1847 の15列をそのまま写す。
+   *
+   * legacy は画面の絞り込みを無視してその日その職員の全件を出していたが、
+   * 「画面に出ている行がそのまま出る」ほうが誤解が無い（計画書 Q5）。
+   * 母集団は一覧が描いている visible そのものにしてある。
+   */
+  const exportCsv = () => {
+    if (plan === null || visible.length === 0) { notify('出力するデータがありません'); return; }
+    const head = ['日付', '職員', '利用者', 'サービス種別', '予定開始', '予定終了', '実績開始', '実績終了',
+      '実施分', '状態', '体温', '血圧', '脈拍', '実施内容', '特記事項'];
+    const body = visible.map((v) => {
+      const rec = recordOf(v.visitId, recs);
+      const resident = plan.residents.find((r) => r.residentId === v.residentId);
+      const min = minutesOf(rec);
+      return [
+        plan.date, plan.staffName, resident?.name ?? v.residentId, v.serviceName,
+        v.startTime, v.endTime, rec?.actualStart ?? '', rec?.actualEnd ?? '',
+        // legacy の日次だけ「実績が揃わなければ空欄」。0 と書くと未実施に見える
+        min || '', deriveStatus(v, rec),
+        rec?.vitals.temperature ?? '', rec?.vitals.bloodPressure ?? '', rec?.vitals.pulse ?? '',
+        (rec?.tasks ?? []).join('・'), rec?.note ?? '',
+      ];
+    });
+    downloadCsv(`実施記録_${plan.staffName}_${plan.date}.csv`, toCsv([head, ...body]));
+    notify('CSVを出力しました');
+  };
   const [bulkOpen, setBulkOpen] = useState(false);
 
   return (
@@ -53,7 +83,7 @@ export function VisitList() {
         {canApprove(session) && (
           <button className="chipbtn" id="approveAll" onClick={() => { void approveAllToday(); }}>一括承認</button>
         )}
-        <button className="chipbtn" id="csvBtn" onClick={later('CSV出力')}>CSV出力</button>
+        <button className="chipbtn" id="csvBtn" onClick={exportCsv}>CSV出力</button>
         <button className="chipbtn primary" id="addBtn" onClick={later('予定の追加')}>＋ 予定を追加</button>
       </div>
 

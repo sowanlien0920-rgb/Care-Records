@@ -53,7 +53,7 @@ export function TodoModal() {
    */
   const [memoDraft, setMemoDraft] = useState<Record<string, string>>({});
   /** 生成中の行。legacy はボタンを disabled にして「作成中…」に差し替える（:3420） */
-  const [generating, setGenerating] = useState<string | null>(null);
+  const [generating, setGenerating] = useState<Set<string>>(new Set());
   /** 行ごとのメモ入力欄。音声入力がカーソル位置を読むのに要る */
   const memoRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const speech = useSpeechInput();
@@ -83,7 +83,8 @@ export function TodoModal() {
   async function saveMemo(visitId: string, saved: string) {
     const draft = memoDraft[visitId];
     if (draft === undefined || draft === saved) return;
-    const ok = await updateRecordFields(visitId, { memo: draft });
+    // legacy:3340 も保存時に trim する。末尾の空白は定型文の文型を変える
+    const ok = await updateRecordFields(visitId, { memo: draft.trim() });
     if (!ok) return;
     setMemoDraft((m) => {
       const next = { ...m };
@@ -101,10 +102,11 @@ export function TodoModal() {
    * 本文が入るとステージが -1 になるので、行は一覧から消える。
    */
   async function generateFor(r: VisitRow) {
-    if (generating !== null) return;
+    // legacy は押した行のボタンだけを止める（:3420）。他の行は押せるまま
+    if (generating.has(r.visit.visitId)) return;
     const record = r.record;
     if (record === undefined) { notify('記録がありません。'); return; }
-    setGenerating(r.visit.visitId);
+    setGenerating((g) => new Set(g).add(r.visit.visitId));
     try {
       // legacy は todoSyncRow で行内の様子・メモを先に取り込んでから生成する（:3419）
       const pending = memoDraft[r.visit.visitId];
@@ -120,9 +122,16 @@ export function TodoModal() {
         ? `作成しました（記載チェックで${ng}件の要修正）`
         : '特記事項を作成しました。内容をご確認ください');
     } finally {
-      setGenerating(null);
+      setGenerating((g) => {
+        const n = new Set(g);
+        n.delete(r.visit.visitId);
+        return n;
+      });
     }
   }
+
+  /** 閉じるときに録音を止める。legacy は未完了一覧を閉じても止まらなかった */
+  const closeTodo = () => { speech.stop(); closePanel(); };
 
   const counts = [0, 0, 0];
   list.forEach((r) => { const st = todoStage(r.visit, r.record); if (st >= 0 && st <= 2) counts[st] = (counts[st] ?? 0) + 1; });
@@ -132,13 +141,13 @@ export function TodoModal() {
     <Modal
       title="未完了の訪問"
       subtitle={`${session ? `${session.name} さん` : ''}／終了まで済んでいない訪問をこの画面から記録できます`}
-      onClose={closePanel}
+      onClose={closeTodo}
       width={1060}
       footer={
         <>
           <span className="sumline">{list.length ? 'この画面から打刻・記録の作成ができます。' : ''}</span>
           <div className="spacer"></div>
-          <button className="bt" onClick={closePanel}>閉じる</button>
+          <button className="bt" onClick={closeTodo}>閉じる</button>
         </>
       }
     >
@@ -211,9 +220,9 @@ export function TodoModal() {
                     {st === 1 && <button className="mini stop" onClick={() => { void stampEndAt(r.visit.visitId); }}>終了</button>}
                     {st === 2 && (
                       <button className="mini" style={{ background: 'linear-gradient(120deg,#6a4bd6,#2b7ee6)', color: '#fff', border: 0 }}
-                        disabled={generating !== null}
+                        disabled={generating.has(r.visit.visitId)}
                         onClick={() => { void generateFor(r); }}>
-                        {generating === r.visit.visitId ? '作成中…' : '✨ 特記事項'}</button>
+                        {generating.has(r.visit.visitId) ? '作成中…' : '✨ 特記事項'}</button>
                     )}
                     <button className="mini" onClick={open}>記録</button>
                   </span>

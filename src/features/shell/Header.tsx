@@ -69,13 +69,13 @@ export function Header() {
       {/* legacy/index.html:4236-4237。表示条件は applyPerms と同じ */}
       {mgr && (
         <button className="gear" id="accBtn" title="職員アカウント管理"
-          onClick={() => notify('職員アカウント管理はステップ6以降で実装します')}>👥</button>
+          onClick={() => notify('職員アカウント管理は Phase 5（Firebase Auth）で実装します')}>👥</button>
       )}
       <button className="gear" id="usrBtn" title="利用者マスタ"
         onClick={() => openResident(null)}>👤</button>
       {mgr && (
         <button className="gear" id="cfgBtn" title="設定"
-          onClick={() => notify('設定はステップ6以降で実装します')}>⚙</button>
+          onClick={() => notify('設定は別の計画で実装します')}>⚙</button>
       )}
       <button className="gear" id="pwBtn" title="パスワード変更"
         onClick={() => notify('パスワード変更は Phase 5（Firebase Auth）で実装します')}>🔑</button>

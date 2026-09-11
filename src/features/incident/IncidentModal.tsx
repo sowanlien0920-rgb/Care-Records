@@ -145,7 +145,7 @@ export function IncidentModal() {
                 </select></div>
               <div className="fld"><label htmlFor="iKindDetail">種別</label>
                 <select id="iKindDetail" defaultValue={KINDS[0]}
-                  onChange={() => notify('種別の保存は Phase 1b で契約に追加します')}>
+                  onChange={() => notify('種別の保存は別の計画で実装します')}>
                   {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
                 </select></div>
             </div>
@@ -154,10 +154,10 @@ export function IncidentModal() {
           <div className="sec">
             <h3>報告書の作成</h3>
             <div className="aibar">
-              <button className="aibtn" onClick={() => notify('AIによる報告書作成は Phase 1b で実装します')}>
+              <button className="aibtn" onClick={() => notify('AIによる報告書作成は Phase 5（AI 接続）で実装します')}>
                 <span className="sp"></span>✨ AIで報告書を作成
               </button>
-              <button className="ghost" onClick={() => notify('記載チェックは Phase 1b で実装します')}>📋 記載チェック</button>
+              <button className="ghost" onClick={() => notify('ヒヤリハットの記載チェックは別の計画で実装します')}>📋 記載チェック</button>
             </div>
             <div className="fld" style={{ marginBottom: 12 }}>
               <label htmlFor="iSituation">発生状況（5W1Hで具体的に）</label>

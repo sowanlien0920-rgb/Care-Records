@@ -162,6 +162,9 @@ export function RecordModal() {
    * 残しておくと同じ訪問を開き直したときに前回の指摘や「元に戻す」が生きている。
    */
   const close = () => {
+    // legacy/index.html:1931。closeModal は先頭で micStop する。
+    // 止めないと、閉じた画面の下書きに認識結果が入り続ける
+    speech.stop();
     setLint(null);
     setStyle(null);
     setUndo(null);

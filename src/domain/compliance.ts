@@ -78,7 +78,7 @@ const LINT_RULES: readonly LintRule[] = [
      * 「薬を飲ませて」「服薬させる」等は押しても置換されなかった。
      * 検出と同じ語幹に活用語尾を足して、検出したものが必ず置換されるようにする。
      */
-    fix: { pattern: /(薬を飲ませ|服薬させ|投薬し)(ました|ます|ている|ていた|ています|た|る|て)?/g, replacement: '服薬の確認を行いました' },
+    fix: { pattern: /(薬を飲ませ|服薬させ|投薬し)(ていただきました|ていただいた|ていました|ています|ていた|ている|ました|ます|た|る|て)?/g, replacement: '服薬の確認を行いました' },
   },
   {
     re: /(草むしり|草取り|庭の手入れ|ペットの世話|犬の散歩|来客の対応|正月料理|おせち|大掃除|窓拭き|換気扇の掃除|模様替え|家具の移動|洗車|花壇)/,
@@ -207,9 +207,13 @@ export function check(record: VisitRecord, plan: CarePlanSnapshot | undefined): 
     const ps = toMin(record.plannedStart);
     const pe = toMin(record.plannedEnd);
     const d = ae - as;
-    // legacy は toMin() の null を引き算に通して 0 / NaN に落としている。
-    // 予定が未入力なら差分を評価しない、という結果だけを写す
-    const pd = ps !== null && pe !== null ? pe - ps : 0;
+    /*
+     * legacy は toMin() の null をそのまま引き算に通している（:2379）。
+     * JS では null が 0 に化けるため、「予定開始だけ未入力」のときは
+     * pd = 予定終了 となって差分の warn が出る。「予定終了だけ未入力」なら
+     * pd が負になって出ない。この非対称を結果ごと写す（鉄則6）。
+     */
+    const pd = (pe ?? 0) - (ps ?? 0);
     if (pd > 0 && Math.abs(d - pd) >= 15) {
       out.push({
         level: 'warn',

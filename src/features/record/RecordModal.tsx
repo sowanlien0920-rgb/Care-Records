@@ -17,6 +17,7 @@
  * ここではフィールド単位のエラー表示と、失敗時に入力を失わないことを担保する。
  */
 import { useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
 import { canApprove, isSupervisor } from '../../types/local';
@@ -178,7 +179,10 @@ export function RecordModal() {
       const list = check(next, resident?.carePlan);
       const ng = list.filter((f) => f.level === 'ng');
       if (ng.length > 0) {
-        setLint({ key: next.visitId, list });
+        // legacy は renderLint() で DOM を書いてから confirm を出す（:2033-2034）。
+        // state 更新はハンドラ終了後に反映されるため、そのままだと
+        // ダイアログを閉じるまで #lintBox が空のままになる
+        flushSync(() => { setLint({ key: next.visitId, list }); });
         const go = window.confirm(
           `記載チェックで${ng.length}件の要修正項目があります。\n\n・${ng.map((o) => o.message).join('\n・')}\n\nこのまま承認しますか？`,
         );

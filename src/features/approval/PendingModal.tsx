@@ -37,7 +37,7 @@ function dowOf(s: string): string {
 }
 
 export function PendingModal() {
-  const { panel, closePanel, visitRows, staff, session, approveVisit, notify, openRecord, setDate, setStaffId } = useCareStore();
+  const { panel, closePanel, visitRows, staff, session, approveVisit, notify, openRecord, setDate, setStaffId, retry } = useCareStore();
   const [range, setRange] = useState('0');
   const [staffFilter, setStaffFilter] = useState('__all');
   const [kind, setKind] = useState('done');
@@ -90,9 +90,16 @@ export function PendingModal() {
     if (noNoteN) msg += '\n\n内容を確認せずに承認すると、実地指導で指摘を受けるおそれがあります。';
     if (!window.confirm(`${msg}\n\n承認しますか？`)) return;
     if (!canApprove(session)) { notify('承認権限がありません。'); return; }
-    for (const t of targets) await approveVisit(t.visit.visitId);
+    let done = 0;
+    for (const t of targets) {
+      if (await approveVisit(t.visit.visitId)) done += 1;
+    }
     setSelected(new Set());
-    notify(`${targets.length}件を承認しました（承認者：${session.name}）`);
+    // 承認できた件数だけを伝える。件数を偽ると、承認されていない記録が
+    // 承認済みとして扱われ、請求前の確認をすり抜ける
+    notify(done === targets.length
+      ? `${done}件を承認しました（承認者：${session.name}）`
+      : `${done}件を承認しました。${targets.length - done}件は承認できませんでした。`);
   }
 
   const openFromRow = (r: VisitRow) => {
@@ -159,7 +166,14 @@ export function PendingModal() {
           <span>サービス提供日</span><span>時間</span><span>利用者／サービス</span><span>担当職員</span><span>状態・チェック</span>
         </div>
         <div className="plist" style={{ maxHeight: 340 }}>
-          {list.length === 0
+          {visitRows.status === 'loading' && <div className="hempty">読み込んでいます…</div>}
+          {/* 取得の失敗を 0件として出すと、未承認が残っていても「ありません」と読める */}
+          {visitRows.status === 'error' && (
+            <div className="hempty">{visitRows.message}
+              <button className="chipbtn" style={{ marginLeft: 8 }} onClick={retry}>再試行</button>
+            </div>
+          )}
+          {visitRows.status === 'ready' && (list.length === 0
             ? <div className="hempty">条件に合う未承認の記録はありません</div>
             : list.map((r) => {
               const st = deriveStatus(r.visit, r.record);
@@ -190,7 +204,7 @@ export function PendingModal() {
                   </span>
                 </div>
               );
-            })}
+            }))}
         </div>
       </div>
     </Modal>

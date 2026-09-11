@@ -8,7 +8,7 @@
  * には触れない。移行対象の実データは存在しないと確認済みのため、
  * 新しいキーで独立して開始する。
  */
-import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow } from './adapter';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from './adapter';
 import { MOCK_STAFF, mockDispatch, mockDispatchDates, mockSeedRecords } from './mock';
 import { parseDispatch, parseVisitRecord, type Dispatch, type VisitRecord } from '../types/contract';
 import {
@@ -24,7 +24,11 @@ const KEY = {
   records: `${NS}.visitRecords`,
   prefs: `${NS}.recordPrefs`,
   auditLogs: `${NS}.auditLogs`,
+  session: `${NS}.session`,
 } as const;
+
+/** 保存済みの記録設定。利用者 ID をキーに持つ */
+const prefsMapSchema = z.record(z.string(), recordPrefsSchema);
 
 // ヒヤリハットは統合先が未定のため、この層ではなく
 // src/features/incident/incidentAdapter.ts が持つ（計画書 §2 の J）。
@@ -140,11 +144,39 @@ export const localAdapter: DataAdapter = {
     return MOCK_STAFF.filter((s) => s.active);
   },
 
+  async getSessionStaffId(): Promise<string | null> {
+    const raw = readRaw(KEY.session);
+    if (raw === null) return null;
+    const parsed = z.object({ staffId: z.string().min(1) }).safeParse(raw);
+    // 壊れていても職員選択に戻せば済む。ログインを止める理由にはならない
+    return parsed.success ? parsed.data.staffId : null;
+  },
+
+  async saveSessionStaffId(staffId: string | null): Promise<void> {
+    if (staffId === null) {
+      try {
+        localStorage.removeItem(KEY.session);
+      } catch (e) {
+        throw new AdapterError('storage', 'ログアウトに失敗しました。ブラウザの設定を確認してください。', String(e));
+      }
+      return;
+    }
+    writeRaw(KEY.session, { staffId });
+  },
+
   async getDispatch(date: string, staffId: string): Promise<Dispatch | null> {
     // Phase 4 までは kpi-react が配信を書き出さないため、モックで代替する。
     // Phase 5 では mockDispatch() を Firestore の dispatches/{date}_{staffId} の
     // 取得に差し替える。検証はこの境界に置いてあるので、差し替えても検証は残る。
-    const raw = mockDispatch(date, staffId);
+    let raw: unknown;
+    try {
+      raw = mockDispatch(date, staffId);
+    } catch (e) {
+      // モックは存在しない職員を素の Error で弾く。境界の外へ出す例外は
+      // AdapterError に統一する（そうしないと「予期しないエラー」に丸められ、
+      // 原因が分かっている失敗まで原因不明として表示される）
+      throw new AdapterError('unknown', '予定を読み込めませんでした。職員の選択をやり直してください。', String(e));
+    }
     // 配信が存在しないことは正常な結果であり、契約違反ではない
     if (raw === null) return null;
     return validateDispatch(raw);
@@ -173,27 +205,21 @@ export const localAdapter: DataAdapter = {
     writeRaw(KEY.records, [...next, ...unreadableRaw]);
   },
 
-  /**
-   * バッジ件数。
-   *
-   * 統計とは数え方が違う点に注意する（legacy の非対称をそのまま写している）。
-   *   統計   : 表示中の職員の、表示中の1日
-   *   未完了 : ログイン中の職員の、今日以前すべて
-   *   未承認 : 全職員・全期間
-   * ログイン中の職員と表示中の職員は、サ責が他職員を表示したときに食い違う。
-   */
-  async listVisitRows(opts): Promise<VisitRow[]> {
+  async listVisitRows(scope: VisitScope, range): Promise<VisitRow[]> {
     const { records } = readRecords();
     const rows: VisitRow[] = [];
     for (const date of mockDispatchDates()) {
-      if (opts?.from !== undefined && date < opts.from) continue;
-      if (opts?.to !== undefined && date > opts.to) continue;
+      if (range?.from !== undefined && date < range.from) continue;
+      if (range?.to !== undefined && date > range.to) continue;
       for (const staff of MOCK_STAFF) {
-        if (opts?.staffId !== undefined && staff.staffId !== opts.staffId) continue;
+        // Phase 5 ではこの絞り込みが Firestore のクエリと
+        // ルールの両方で行われる（ルールが最終的な防壁になる）
+        if (scope.kind === 'staff' && staff.staffId !== scope.staffId) continue;
         const d = mockDispatch(date, staff.staffId);
         if (d === null) continue;
         for (const v of d.visits) {
           rows.push({
+            facilityId: d.facilityId,
             date, staffId: staff.staffId, staffName: staff.name,
             visit: v,
             record: recordOf(v.visitId, records),
@@ -211,6 +237,15 @@ export const localAdapter: DataAdapter = {
     writeRaw(KEY.records, [...records.filter((r) => r.visitId !== visitId), ...unreadableRaw]);
   },
 
+  /**
+   * バッジ件数。
+   *
+   * 統計とは数え方が違う点に注意する（legacy の非対称をそのまま写している）。
+   *   統計   : 表示中の職員の、表示中の1日
+   *   未完了 : ログイン中の職員の、今日以前すべて
+   *   未承認 : 全職員・全期間
+   * ログイン中の職員と表示中の職員は、サ責が他職員を表示したときに食い違う。
+   */
   async getBadgeCounts(sessionStaffId: string): Promise<BadgeCounts> {
     const { records } = readRecords();
     const today = iso(new Date());
@@ -234,7 +269,7 @@ export const localAdapter: DataAdapter = {
   async getPrefs(residentId: string): Promise<RecordPrefs> {
     const raw = readRaw(KEY.prefs);
     if (raw === null) return blankRecordPrefs();
-    const parsed = z.record(z.string(), recordPrefsSchema).safeParse(raw);
+    const parsed = prefsMapSchema.safeParse(raw);
     if (!parsed.success) {
       throw new AdapterError('contract', '記録設定の形式が正しくありません。', z.prettifyError(parsed.error));
     }
@@ -247,7 +282,15 @@ export const localAdapter: DataAdapter = {
       throw new AdapterError('contract', '記録設定の内容が正しくありません。', z.prettifyError(parsed.error));
     }
     const raw = readRaw(KEY.prefs);
-    const current = raw === null ? {} : z.record(z.string(), recordPrefsSchema).parse(raw);
+    // 保存済みが壊れていても、生の ZodError を境界の外へ出さない
+    let current: Record<string, RecordPrefs> = {};
+    if (raw !== null) {
+      const existing = prefsMapSchema.safeParse(raw);
+      if (!existing.success) {
+        throw new AdapterError('contract', '保存されている記録設定の形式が正しくありません。', z.prettifyError(existing.error));
+      }
+      current = existing.data;
+    }
     writeRaw(KEY.prefs, { ...current, [residentId]: parsed.data });
   },
 

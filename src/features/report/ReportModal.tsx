@@ -40,7 +40,7 @@ function hm(min: number): string {
 }
 
 export function ReportModal() {
-  const { panel, closePanel, visitRows, staff, date, notify } = useCareStore();
+  const { panel, closePanel, visitRows, staff, date, notify, retry } = useCareStore();
   const [type, setType] = useState<'user' | 'staff' | 'summary'>('user');
   const [month, setMonth] = useState(() => date.slice(0, 7));
   const [residentId, setResidentId] = useState('');
@@ -97,11 +97,27 @@ export function ReportModal() {
         </div>
       </div>
 
-      <div className="rep">
-        {type === 'user' && <UserReport rows={inMonth.filter((r) => r.resident?.residentId === curResident)} month={month} />}
-        {type === 'staff' && <StaffReport rows={inMonth.filter((r) => r.staffId === curStaff)} month={month} />}
-        {type === 'summary' && <SummaryReport rows={inMonth} month={month} />}
-      </div>
+      {/*
+        * 取得できていない状態で表を出すと「この月の記録はありません」になり、
+        * 記録が無いことの証明として読めてしまう。帳票は請求突合に使うため、
+        * 読めていないことは読めていないと出す。
+        */}
+      {visitRows.status !== 'ready' ? (
+        <div className="sec">
+          <div className="hempty">
+            {visitRows.status === 'loading' ? '読み込んでいます…' : visitRows.message}
+            {visitRows.status === 'error' && (
+              <button className="chipbtn" style={{ marginLeft: 8 }} onClick={retry}>再試行</button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="rep">
+          {type === 'user' && <UserReport rows={inMonth.filter((r) => r.resident?.residentId === curResident)} month={month} />}
+          {type === 'staff' && <StaffReport rows={inMonth.filter((r) => r.staffId === curStaff)} month={month} />}
+          {type === 'summary' && <SummaryReport rows={inMonth} month={month} />}
+        </div>
+      )}
     </Modal>
   );
 }

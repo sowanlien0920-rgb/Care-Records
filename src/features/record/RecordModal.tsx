@@ -22,15 +22,10 @@ import { useCareStore } from '../../store/useCareStore';
 import { canApprove, isSupervisor } from '../../types/local';
 import { newRecordFor, recordOf } from '../../domain/visitStatus';
 import { clampToPlan, nowHM } from '../../domain/timeValidation';
+import { SERVICE_OPTIONS, TASK_OPTIONS } from '../../domain/vocabulary';
 import { toMin } from '../../utils/date';
 import type { ServiceKind, VisitRecord, VisitStatus } from '../../types/contract';
 
-/** legacy/index.html:1641-1642 の TASKS */
-const TASKS = [
-  '排泄介助', '食事介助', '入浴介助', '清拭・整容', '更衣介助', '服薬確認',
-  '体位変換', '移動・移乗', '調理', '掃除', '洗濯', '買い物', '見守り', '記録・連絡',
-];
-const SERVICES: ServiceKind[] = ['身体介護', '生活援助', '身体＋生活', '通院等乗降介助'];
 const STATUSES: VisitStatus[] = ['未完', '済', '完了', 'キャンセル'];
 
 /** legacy/index.html:3074-3082 の outOfPlan */
@@ -82,17 +77,18 @@ export function RecordModal() {
 
   if (editingVisitId === null || visit === null || plan === null) return null;
 
+  const saved = recordOf(visit.visitId, recs);
   // キーが変われば保存済みの記録（無ければ配信からの初期値）に戻る
   const draft: VisitRecord = edit !== null && edit.key === editingVisitId
     ? edit.draft
-    : recordOf(visit.visitId, recs) ?? newRecordFor(visit, plan, resident);
+    : saved ?? newRecordFor(visit, plan, resident);
 
   const set = <K extends keyof VisitRecord>(k: K, v: VisitRecord[K]) =>
     setEdit({ key: visit.visitId, draft: { ...draft, [k]: v } });
   const setDraft = (fn: (d: VisitRecord) => VisitRecord) =>
     setEdit({ key: visit.visitId, draft: fn(draft) });
 
-  const wasApproved = recordOf(visit.visitId, recs)?.status === '完了';
+  const wasApproved = saved?.status === '完了';
   const sup = isSupervisor(session);
   const frame = toMin(draft.plannedStart) !== null && toMin(draft.plannedEnd) !== null
     ? `予定枠 ${draft.plannedStart}〜${draft.plannedEnd}（${Math.max(0, (toMin(draft.plannedEnd) ?? 0) - (toMin(draft.plannedStart) ?? 0))}分）`
@@ -182,7 +178,7 @@ export function RecordModal() {
       footer={
         <>
           <button className="bt del" disabled={busy} onClick={() => { void (async () => {
-            if (recordOf(visit.visitId, recs) === undefined) { notify('まだ記録がありません。'); return; }
+            if (saved === undefined) { notify('まだ記録がありません。'); return; }
             if (wasApproved && !canApprove(session)) { notify('承認済みの記録の削除は承認権限のある職員のみ行えます。'); return; }
             if (!window.confirm('この記録を削除します。よろしいですか？')) return;
             setBusy(true);
@@ -217,7 +213,7 @@ export function RecordModal() {
         <div className="grid2" style={{ marginTop: 12 }}>
           <div className="fld"><label htmlFor="fSvc">サービス種別</label>
             <select id="fSvc" value={draft.serviceName} onChange={(e) => set('serviceName', e.target.value as ServiceKind)}>
-              {SERVICES.map((s) => <option key={s} value={s}>{s}</option>)}
+              {SERVICE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div className="fld"><label htmlFor="fStatus">状態</label>
@@ -308,23 +304,24 @@ export function RecordModal() {
 
       {/* 4. 実施内容 */}
       <div className="sec">
-        <h3>実施内容 {draft.tasks.length === 0 && (resident?.carePlan.plannedTasks.length ?? 0) > 0 && (
+        {/*
+          * 初期選択は newRecordFor が訪問介護計画から draft.tasks に入れている。
+          * ここで plannedTasks へフォールバックすると、画面ではチェックが付いたまま
+          * 保存された記録の実施内容が空になる（帳票の実施内容が空欄になる）。
+          */}
+        <h3>実施内容 {saved === undefined && (resident?.carePlan.plannedTasks.length ?? 0) > 0 && (
           <span className="srcbadge">📋 訪問介護計画の内容を初期選択しています</span>
         )}</h3>
         <div className="chips" id="fTasks">
-          {TASKS.map((t) => {
-            const on = (draft.tasks.length > 0 ? draft.tasks : resident?.carePlan.plannedTasks ?? []).includes(t);
-            return (
-              // input の直後が span であること。.chk input:checked+span が効かなくなる
-              <label className="chk" key={t}>
-                <input type="checkbox" value={t} checked={on} onChange={(e) => {
-                  const base = draft.tasks.length > 0 ? draft.tasks : resident?.carePlan.plannedTasks ?? [];
-                  set('tasks', e.target.checked ? [...base, t] : base.filter((x) => x !== t));
-                }} />
-                <span>{t}</span>
-              </label>
-            );
-          })}
+          {TASK_OPTIONS.map((t) => (
+            // input の直後が span であること。.chk input:checked+span が効かなくなる
+            <label className="chk" key={t}>
+              <input type="checkbox" value={t} checked={draft.tasks.includes(t)} onChange={(e) => {
+                set('tasks', e.target.checked ? [...draft.tasks, t] : draft.tasks.filter((x) => x !== t));
+              }} />
+              <span>{t}</span>
+            </label>
+          ))}
         </div>
       </div>
 

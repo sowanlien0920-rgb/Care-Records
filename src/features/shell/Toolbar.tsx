@@ -10,7 +10,7 @@
  *   未承認 : 全職員・全期間の「済」件数
  */
 import { useCareStore } from '../../store/useCareStore';
-import { canApprove, isManager, isSupervisor } from '../../types/local';
+import { canApprove, isSupervisor } from '../../types/local';
 
 function Badge({ id, count }: { id: string; count: number }) {
   // legacy/index.html:3262-3263。0 件でも要素は消さず zero クラスを付ける
@@ -19,7 +19,6 @@ function Badge({ id, count }: { id: string; count: number }) {
 
 export function Toolbar() {
   const { session, badges, openPanel } = useCareStore();
-  const mgr = isManager(session);
   const sup = isSupervisor(session);
   const approver = canApprove(session);
 
@@ -44,8 +43,7 @@ export function Toolbar() {
       {/* legacy/index.html:4230-4245。incBtn は applyPerms の対象外で全ロールに出る */}
       <button className="tbtn" id="incBtn" onClick={() => openPanel('incident')}>⚠ ヒヤリハット・事故報告</button>
       {/* バックアップは移植しない（計画書 §2 の対象外）。管理者のみ表示だった枠は空ける */}
-      {mgr && <div className="sep"></div>}
-      {!mgr && <div className="sep"></div>}
+      <div className="sep"></div>
       <span className="memo-note" id="bkState"></span>
     </div>
   );

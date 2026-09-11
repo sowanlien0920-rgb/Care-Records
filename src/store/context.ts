@@ -31,6 +31,11 @@ export interface CareStore {
    * Phase 5 で Firebase Auth に置き換わる。
    */
   session: StaffAccount | null;
+  /**
+   * 保存済みの職員選択を復元している最中か。
+   * true の間は「未ログイン」と判定しない（職員選択が一瞬見えるのを防ぐ）。
+   */
+  sessionRestoring: boolean;
   signIn: (staffId: string) => void;
   signOut: () => void;
 
@@ -98,8 +103,11 @@ export interface CareStore {
   stampStartAt: (visitId: string) => Promise<void>;
   /** 終了を打刻する。状態が「済」になる */
   stampEndAt: (visitId: string) => Promise<void>;
-  /** 承認して「完了」にする。承認者を記録に残す（法定要件） */
-  approveVisit: (visitId: string) => Promise<void>;
+  /**
+   * 承認して「完了」にする。承認者を記録に残す（法定要件）。
+   * 戻り値は「保存できたか」。呼び出し側は結果を見てから通知する。
+   */
+  approveVisit: (visitId: string) => Promise<boolean>;
   /** その日の「済」をまとめて承認する。絞り込みの影響を受けない */
   approveAllToday: () => Promise<void>;
   /** 失敗した取得をやり直す。error 表示から利用者が次の行動を取れるようにする */

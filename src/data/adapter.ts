@@ -70,8 +70,12 @@ export interface BadgeCounts {
  * 配信された訪問と、それに対応する実施記録の組。
  * 未承認一覧・未完了の訪問・帳票・経過記録は、いずれも日付と職員をまたぐため、
  * 1日1職員で取る配信とは別の経路が要る。
+ *
+ * 打刻・承認はこの行からも記録を組み立てるため、facilityId を持たせている。
+ * 表示中の配信に無い訪問（他日・他職員）を操作できるのはこれが理由になる。
  */
 export interface VisitRow {
+  facilityId: string;
   date: string;
   staffId: string;
   staffName: string;
@@ -80,9 +84,34 @@ export interface VisitRow {
   resident: ResidentBrief | undefined;
 }
 
+/**
+ * 誰の分を読むか。
+ *
+ * 省略可能な staffId にすると「渡し忘れ」が全職員分の取得になり、
+ * その誤りが Phase 5 まで表面化しない（Firestore ルールで初めて弾かれる）。
+ * ヘルパーが自分の分しか読めないことは訪問介護の情報の扱いとして必須なので、
+ * 呼び出し側に必ず選ばせる形にしてある。
+ */
+export type VisitScope =
+  /** 事業所全体。サービス提供責任者以上、または承認権限を持つ職員のみ成立する */
+  | { kind: 'all' }
+  | { kind: 'staff'; staffId: string };
+
 export interface DataAdapter {
   // ── 職員（Phase 5 で Firebase Auth に置き換わる） ──────────
   listStaff(): Promise<StaffAccount[]>;
+
+  /**
+   * 選択中の職員 ID。Phase 1a の簡易ログインを再読込のあとも保つ。
+   *
+   * ヘルパーはスマホ・タブレットで訪問先から使うため、タブの再読込で
+   * 職員選択に戻ると訪問のたびに選び直すことになる。
+   * Phase 5 では Firebase Auth の永続化に置き換わるので、
+   * UI から localStorage を触らずここに閉じておく。
+   */
+  getSessionStaffId(): Promise<string | null>;
+  /** null を渡すとログアウト */
+  saveSessionStaffId(staffId: string | null): Promise<void>;
 
   // ── 配信（読み取り専用。kpi-react が正） ──────────────────
   /** 指定日・指定職員の配信。存在しなければ null（0件は empty であって error ではない） */
@@ -113,11 +142,11 @@ export interface DataAdapter {
   /**
    * 訪問と記録を突き合わせた一覧。日付・職員をまたいで取る。
    *
-   * Phase 5 では Firestore のクエリになる。ヘルパーはルール上
-   * 自分の分しか読めないため、staffId を渡さない呼び出しは
-   * サービス提供責任者以上でのみ成立する点に注意する。
+   * Phase 5 では Firestore のクエリになる。scope を必須にしているのは
+   * VisitScope のコメントのとおりで、`{ kind: 'all' }` は
+   * サービス提供責任者以上、または承認権限を持つ職員でのみ成立する。
    */
-  listVisitRows(opts?: { from?: string; to?: string; staffId?: string }): Promise<VisitRow[]>;
+  listVisitRows(scope: VisitScope, range?: { from?: string; to?: string }): Promise<VisitRow[]>;
 
   // ── 記録支援設定（carerecords 固有） ──────────────────────
   getPrefs(residentId: string): Promise<RecordPrefs>;

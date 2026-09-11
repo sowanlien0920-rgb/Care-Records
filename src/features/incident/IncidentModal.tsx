@@ -6,7 +6,7 @@
  * 統合先（incident-report に寄せるか carerecords 内に残すか）が未定のため、
  * その決定を先送りできる形を保つのが目的（計画書 §2 の J）。
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
 import { iso } from '../../utils/date';
@@ -33,17 +33,41 @@ function blank(staffId: string): Incident {
 }
 
 export function IncidentModal() {
-  const { panel, closePanel, incidents, saveIncident, session, dispatch, notify } = useCareStore();
+  const { panel, closePanel, incidents, saveIncident, session, dispatch, visitRows, notify } = useCareStore();
   const [form, setForm] = useState<Incident | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * 報告は発生日を任意に指定できるので、表示中の日付の配信だけでは
+   * 利用者名を引けない。訪問の一覧と配信の両方から集める。
+   */
+  const residents = useMemo(() => {
+    const map = new Map<string, string>();
+    if (visitRows.status === 'ready') {
+      for (const r of visitRows.data) {
+        if (r.resident !== undefined) map.set(r.resident.residentId, r.resident.name);
+      }
+    }
+    if (dispatch.status === 'ready') {
+      for (const r of dispatch.data?.residents ?? []) map.set(r.residentId, r.name);
+    }
+    return [...map.entries()].map(([residentId, name]) => ({ residentId, name }));
+  }, [visitRows, dispatch]);
 
   if (panel !== 'incident') return null;
 
   const list = incidents.status === 'ready'
     ? [...incidents.data].sort((a, b) => (b.date + b.reportedAt).localeCompare(a.date + a.reportedAt))
     : [];
-  const residents = dispatch.status === 'ready' ? dispatch.data?.residents ?? [] : [];
+  /*
+   * 名前を引けなかったことを「利用者未選択」と出さない。
+   * 事故報告書で誰に起きたかが欠けて見えるため、ID を出して追えるようにする。
+   */
+  const nameOf = (residentId: string | null): string => {
+    if (residentId === null) return '利用者未選択';
+    return residents.find((r) => r.residentId === residentId)?.name ?? `利用者ID ${residentId}`;
+  };
   const set = <K extends keyof Incident>(k: K, v: Incident[K]) =>
     setForm((f) => (f === null ? f : { ...f, [k]: v }));
 
@@ -84,7 +108,7 @@ export function IncidentModal() {
             {incidents.status === 'ready' && list.length === 0 && <div className="hempty">登録された報告はありません</div>}
             {list.map((x) => (
               <div className="prow" key={x.incidentId} onClick={() => { setForm(x); setError(null); }}>
-                <span className="nm">{x.date} {x.reportedAt}{'\u3000'}{residents.find((r) => r.residentId === x.residentId)?.name ?? '利用者未選択'}</span>
+                <span className="nm">{x.date} {x.reportedAt}{'\u3000'}{nameOf(x.residentId)}</span>
                 {/* legacy/index.html:3891。ヒヤリハット側に .ok（緑）が付く */}
                 <span className={`st${x.kind !== '事故' ? ' ok' : ''}`}>{x.kind}・{x.place}</span>
               </div>

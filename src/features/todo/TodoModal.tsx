@@ -31,7 +31,7 @@ function dowOf(s: string): string {
 
 export function TodoModal() {
   const {
-    panel, closePanel, visitRows, session, notify,
+    panel, closePanel, visitRows, session, notify, retry,
     openRecord, setDate, setStaffId, stampStartAt, stampEndAt,
   } = useCareStore();
   const sup = isSupervisor(session);
@@ -94,7 +94,9 @@ export function TodoModal() {
               <option value="2">記録未完成（特記事項なし）</option>
             </select></div>
           <div className="fld"><label>&nbsp;</label>
-            <button className="ghost" style={{ width: '100%' }} onClick={() => notify('最新の状態に更新しました')}>最新の状態に更新</button></div>
+            {/* 取得し直さずに「更新しました」と出すと、更新されていないことに気づけない */}
+            <button className="ghost" style={{ width: '100%' }}
+              onClick={() => { retry(); notify('最新の状態に更新しています…'); }}>最新の状態に更新</button></div>
         </div>
         <div className="rsum">
           <span className="k">未着手<b>{counts[0]}件</b></span>
@@ -112,7 +114,14 @@ export function TodoModal() {
           <span>担当職員</span><span>状態</span><span style={{ textAlign: 'right' }}>操作</span>
         </div>
         <div className="plist" style={{ maxHeight: 380 }}>
-          {list.length === 0
+          {visitRows.status === 'loading' && <div className="todo-empty"><div className="ico">⏳</div>読み込んでいます…</div>}
+          {/* 取得の失敗を 0件として出すと「すべて終了しています」と読めてしまう */}
+          {visitRows.status === 'error' && (
+            <div className="todo-empty"><div className="ico">⚠️</div>{visitRows.message}<br />
+              <button className="mini" style={{ marginTop: 8 }} onClick={retry}>再試行</button>
+            </div>
+          )}
+          {visitRows.status === 'ready' && (list.length === 0
             ? <div className="todo-empty"><div className="ico">✓</div>
                 未完了の訪問はありません。<br />本日分の記録はすべて終了しています。</div>
             : list.map((r) => {
@@ -156,7 +165,7 @@ export function TodoModal() {
                   )}
                 </div>
               );
-            })}
+            }))}
         </div>
       </div>
     </Modal>

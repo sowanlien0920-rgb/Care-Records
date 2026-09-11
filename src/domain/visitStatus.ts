@@ -63,9 +63,18 @@ export function recordOf(visitId: string, records: VisitRecord[]): VisitRecord |
  * 「あとから引けなくなる情報」の埋め忘れを防ぐ。どちらも法定文書としての
  * 追跡可能性のために必要になる（記録単体で誰が実施し、どの計画に沿ったかを読めること）。
  */
+/**
+ * 記録の生成に必要な「どの事業所の・いつの・誰の訪問か」。
+ *
+ * Dispatch はこの形を満たすのでそのまま渡せる。表示中の配信に無い訪問
+ * （未承認一覧や未完了の訪問から操作する他日・他職員の分）は VisitRow から
+ * 同じ組を作って渡す。
+ */
+export type RecordContext = Pick<Dispatch, 'facilityId' | 'date' | 'staffId' | 'staffName'>;
+
 export function newRecordFor(
   visit: DispatchVisit,
-  dispatch: Dispatch,
+  dispatch: RecordContext,
   resident: ResidentBrief | undefined,
 ): VisitRecord {
   const now = new Date().toISOString();
@@ -80,7 +89,16 @@ export function newRecordFor(
     plannedEnd: visit.endTime,
     actualStart: '',
     actualEnd: '',
-    tasks: [],
+    /*
+     * 訪問介護計画のサービス内容を初期値にする。
+     *
+     * legacy は予定側に tasks を持たせ、記録画面はそれを初期選択として表示し、
+     * collect() が選択状態をそのまま保存していた（:1967-1978）。新モデルでは
+     * 予定は配信から来て tasks を持たないため、ここで計画の内容を写さないと
+     * 「画面ではチェックが付いているのに、保存された記録の実施内容は空」になる。
+     * 実施内容はサービス提供の根拠なので、表示と保存を一致させる。
+     */
+    tasks: [...(resident?.carePlan.plannedTasks ?? [])],
     vitals: { temperature: '', bloodPressure: '', pulse: '' },
     note: '',
     noteSource: null,

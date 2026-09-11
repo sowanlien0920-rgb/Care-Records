@@ -16,7 +16,7 @@ import { iso, toMin } from '../../utils/date';
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
 export function TimelineModal() {
-  const { panel, closePanel, visitRows, notify } = useCareStore();
+  const { panel, closePanel, visitRows, notify, retry } = useCareStore();
   const [residentId, setResidentId] = useState('');
   const [range, setRange] = useState('3');
 
@@ -76,7 +76,15 @@ export function TimelineModal() {
       <div className="sec">
         <h3>サービス提供の記録 <span className="bchip">{list.length}件</span></h3>
         <div className="tl">
-          {list.length === 0
+          {visitRows.status === 'loading' && <div className="tlempty">読み込んでいます…</div>}
+          {/* 取得の失敗を「この期間の記録はありません」と出さない。
+              経過記録はモニタリング・担当者会議の判断材料になる */}
+          {visitRows.status === 'error' && (
+            <div className="tlempty">{visitRows.message}
+              <button className="bt" style={{ marginLeft: 8 }} onClick={retry}>再試行</button>
+            </div>
+          )}
+          {visitRows.status === 'ready' && (list.length === 0
             ? <div className="tlempty">この期間の記録はありません</div>
             : list.map((r) => {
               const a = r.record?.actualStart || r.visit.startTime;
@@ -101,7 +109,7 @@ export function TimelineModal() {
                   </div>
                 </div>
               );
-            })}
+            }))}
         </div>
       </div>
     </Modal>

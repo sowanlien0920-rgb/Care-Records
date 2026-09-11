@@ -14,15 +14,15 @@
  * 条件が変わった直後に前の条件の結果が一瞬見えることもある。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow } from '../data/adapter';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from '../data/adapter';
 import { CareStoreContext, type Async, type CareStore, type PanelKind } from './context';
 import { localAdapter } from '../data/localAdapter';
 import { iso } from '../utils/date';
-import { newRecordFor, recordOf } from '../domain/visitStatus';
+import { newRecordFor, recordOf, type RecordContext } from '../domain/visitStatus';
 import { stampEnd, stampStart } from '../domain/timeValidation';
-import { canApprove, type Incident, type RecordPrefs } from '../types/local';
+import { canApprove, isSupervisor, type Incident, type RecordPrefs } from '../types/local';
 import { localIncidentAdapter } from '../features/incident/incidentAdapter';
-import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
+import type { Dispatch, DispatchVisit, ResidentBrief, VisitRecord, VisitStatus } from '../types/contract';
 import type { StaffAccount } from '../types/local';
 
 /** 取得結果を、取得条件のキーと一緒に持つ */
@@ -39,6 +39,14 @@ function toAsyncError(e: unknown): Extract<Async<never>, { status: 'error' }> {
   return { status: 'error', message: '予期しないエラーが発生しました。', kind: 'unknown' };
 }
 
+/** 打刻・承認の対象。記録が無ければ context から新しい記録を組み立てる */
+interface MutationTarget {
+  visit: DispatchVisit;
+  record: VisitRecord | undefined;
+  context: RecordContext;
+  resident: ResidentBrief | undefined;
+}
+
 /** キーが一致していれば結果を、していなければ loading を返す */
 function resolve<T>(keyed: Keyed<T> | null, key: string): Async<T> {
   return keyed !== null && keyed.key === key ? keyed.result : { status: 'loading' };
@@ -52,8 +60,14 @@ export function CareStoreProvider({
   adapter?: DataAdapter;
 }) {
   const [date, setDate] = useState(() => iso(new Date()));
-  const [session, setSession] = useState<StaffAccount | null>(null);
-  const [staffId, setStaffId] = useState<string | null>(null);
+  /**
+   * ログイン中の職員 ID の置き場。
+   * null は「保存領域をまだ読んでいない」、{ staffId: null } は「読んだが未ログイン」。
+   * 区別しないと、復元が終わる前に職員選択画面が一瞬見える。
+   */
+  const [sessionSlot, setSessionSlot] = useState<{ staffId: string | null } | null>(null);
+  /** ヘッダーで切り替えた表示中の職員。切り替えていなければログイン中の職員を見る */
+  const [pickedStaffId, setPickedStaffId] = useState<string | null>(null);
   const [filter, setFilter] = useState<VisitStatus | 'all'>('all');
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [residentModalOpen, setResidentModalOpen] = useState(false);
@@ -84,9 +98,44 @@ export function CareStoreProvider({
   const retry = useCallback(() => setReloadToken((n) => n + 1), []);
 
   const staffKey = `${reloadToken}`;
+  const staff = useMemo(() => resolve(staffKeyed, staffKey), [staffKeyed, staffKey]);
+
+  /*
+   * ログイン中の職員は「保存した ID」と「職員一覧」から導く。
+   * 保存するのは ID だけにしてあるので、退職・権限変更が職員一覧に
+   * 反映された時点で、古い権限のまま操作できる状態が残らない。
+   */
+  const session = useMemo<StaffAccount | null>(() => {
+    const id = sessionSlot?.staffId ?? null;
+    if (id === null || staff.status !== 'ready') return null;
+    return staff.data.find((s) => s.staffId === id) ?? null;
+  }, [sessionSlot, staff]);
+
+  /** 保存領域の読み出しと職員一覧の照合が終わるまで、ログイン状態は判定できない */
+  const sessionRestoring = sessionSlot === null
+    || (sessionSlot.staffId !== null && staff.status === 'loading');
+
+  const staffId = pickedStaffId ?? session?.staffId ?? null;
+
   const scopedKey = `${reloadToken}|${date}|${staffId ?? ''}`;
   // バッジはログイン中の職員が基準で、日付には依存しない
   const badgeKey = `${reloadToken}|${session?.staffId ?? ''}`;
+
+  /*
+   * 日付・職員をまたぐ一覧は「誰の分を読むか」で結果が変わる。
+   * 訪問介護員は自分の分しか読めない（Phase 5 では Firestore ルールが弾く）ので、
+   * 全職員分を取って画面側で隠す形にはしない。取らなければ漏れない。
+   */
+  const rowScope = useMemo<VisitScope | null>(() => {
+    if (session === null) return null;
+    // canApprove は null を除く型ガードのため、否定側で session が never に狭まる。
+    // ID を先に取り出して、判定と値の取得を分けておく
+    const { staffId: id } = session;
+    return isSupervisor(session) || canApprove(session)
+      ? { kind: 'all' }
+      : { kind: 'staff', staffId: id };
+  }, [session]);
+  const rowsKey = `${reloadToken}|${rowScope === null ? '' : rowScope.kind === 'all' ? 'all' : rowScope.staffId}`;
 
   // 職員一覧
   useEffect(() => {
@@ -96,6 +145,16 @@ export function CareStoreProvider({
       .catch((e) => { if (alive) setStaffKeyed({ key: staffKey, result: toAsyncError(e) }); });
     return () => { alive = false; };
   }, [adapter, staffKey]);
+
+  // 保存済みの職員選択を復元する。Phase 5 では Firebase Auth の永続化に置き換わる
+  useEffect(() => {
+    let alive = true;
+    adapter.getSessionStaffId()
+      .then((id) => { if (alive) setSessionSlot({ staffId: id }); })
+      // 復元できないことはログインを止める理由にならない。職員選択から始める
+      .catch(() => { if (alive) setSessionSlot({ staffId: null }); });
+    return () => { alive = false; };
+  }, [adapter]);
 
   // 配信
   useEffect(() => {
@@ -128,12 +187,13 @@ export function CareStoreProvider({
 
   // 日付・職員をまたぐ一覧
   useEffect(() => {
+    if (rowScope === null) return;
     let alive = true;
-    adapter.listVisitRows()
-      .then((data) => { if (alive) setRowsKeyed({ key: staffKey, result: { status: 'ready', data } }); })
-      .catch((e) => { if (alive) setRowsKeyed({ key: staffKey, result: toAsyncError(e) }); });
+    adapter.listVisitRows(rowScope)
+      .then((data) => { if (alive) setRowsKeyed({ key: rowsKey, result: { status: 'ready', data } }); })
+      .catch((e) => { if (alive) setRowsKeyed({ key: rowsKey, result: toAsyncError(e) }); });
     return () => { alive = false; };
-  }, [adapter, staffKey]);
+  }, [adapter, rowScope, rowsKey]);
 
   // バッジ
   useEffect(() => {
@@ -147,25 +207,29 @@ export function CareStoreProvider({
   }, [adapter, session, badgeKey]);
 
   const signIn = useCallback((id: string) => {
-    const found = staffKeyed?.result.status === 'ready'
-      ? staffKeyed.result.data.find((s) => s.staffId === id) ?? null
-      : null;
-    setSession(found);
+    setSessionSlot({ staffId: id });
     // ログイン直後は自分の担当を表示する。legacy/index.html:4165 と同じ
-    setStaffId(found?.staffId ?? null);
-  }, [staffKeyed]);
+    setPickedStaffId(null);
+    // 保存に失敗してもこの画面は使える。次回の再読込で選び直しになることだけ伝える
+    void adapter.saveSessionStaffId(id).catch(() => notify('この端末ではログイン状態を保持できません。'));
+  }, [adapter, notify]);
 
   const signOut = useCallback(() => {
-    setSession(null);
-    setStaffId(null);
-  }, []);
+    setSessionSlot({ staffId: null });
+    setPickedStaffId(null);
+    void adapter.saveSessionStaffId(null).catch(() => notify('ログイン状態の消去に失敗しました。'));
+  }, [adapter, notify]);
+
+  const setStaffId = useCallback((id: string) => setPickedStaffId(id), []);
 
 
   // 職員未選択のときは取得そのものが起きないので、待たせずに空を返す。
   // 毎描画で新しいオブジェクトを作ると Context の値が変わり全体が再描画されるため memo する。
-  const staff = useMemo(() => resolve(staffKeyed, staffKey), [staffKeyed, staffKey]);
   const incidents = useMemo(() => resolve(incidentsKeyed, staffKey), [incidentsKeyed, staffKey]);
-  const visitRows = useMemo(() => resolve(rowsKeyed, staffKey), [rowsKeyed, staffKey]);
+  const visitRows = useMemo<Async<VisitRow[]>>(
+    () => (rowScope === null ? { status: 'ready', data: [] } : resolve(rowsKeyed, rowsKey)),
+    [rowScope, rowsKeyed, rowsKey],
+  );
   const dispatch = useMemo<Async<Dispatch | null>>(
     () => (staffId === null ? { status: 'ready', data: null } : resolve(dispatchKeyed, scopedKey)),
     [staffId, dispatchKeyed, scopedKey],
@@ -199,60 +263,102 @@ export function CareStoreProvider({
   }, [adapter, notify]);
 
   /**
+   * visitId から、打刻・承認の対象を解決する。
+   *
+   * 表示中の配信を先に見て、無ければ日付・職員をまたぐ一覧から探す。
+   * 未承認一覧と未完了の訪問は別の日・別の職員の行を並べるため、
+   * 表示中の配信だけを見ると、そこからの操作が黙って失敗する。
+   */
+  const findTarget = useCallback((visitId: string): MutationTarget | null => {
+    const plan = dispatch.status === 'ready' ? dispatch.data : null;
+    const visit = plan?.visits.find((v) => v.visitId === visitId);
+    if (plan !== null && visit !== undefined) {
+      const list = records.status === 'ready' ? records.data.records : [];
+      return {
+        visit,
+        record: recordOf(visitId, list),
+        // Dispatch は RecordContext の4項目をそのまま持つ
+        context: plan,
+        resident: plan.residents.find((r) => r.residentId === visit.residentId),
+      };
+    }
+    const row = visitRows.status === 'ready'
+      ? visitRows.data.find((r) => r.visit.visitId === visitId)
+      : undefined;
+    if (row === undefined) return null;
+    return {
+      visit: row.visit,
+      record: row.record,
+      context: { facilityId: row.facilityId, date: row.date, staffId: row.staffId, staffName: row.staffName },
+      resident: row.resident,
+    };
+  }, [dispatch, records, visitRows]);
+
+  /**
    * 記録を1件書き換える。存在しなければ配信から作る。
    * 一覧の打刻・承認はすべてここを通す。
+   *
+   * 戻り値は「保存できたか」。呼び出し側が結果を見ずに成功を通知すると、
+   * 保存されていない打刻・承認が成功として利用者に伝わる。
    */
   const mutateRecord = useCallback(async (
     visitId: string,
     change: (record: VisitRecord) => VisitRecord | { error: string },
-  ): Promise<void> => {
-    const plan = dispatchKeyed?.result.status === 'ready' ? dispatchKeyed.result.data : null;
-    const list = recordsKeyed?.result.status === 'ready' ? recordsKeyed.result.data.records : [];
-    if (plan === null) { notify('予定を読み込めていません。'); return; }
-    const visit = plan.visits.find((v) => v.visitId === visitId);
-    if (visit === undefined) { notify('対象の訪問が見つかりません。'); return; }
-
-    const current = recordOf(visitId, list)
-      ?? newRecordFor(visit, plan, plan.residents.find((r) => r.residentId === visit.residentId));
+  ): Promise<boolean> => {
+    const target = findTarget(visitId);
+    if (target === null) {
+      // 取得中と「本当に無い」を同じ文言にすると、待てば済むことが伝わらない
+      const loading = dispatch.status === 'loading' || visitRows.status === 'loading';
+      notify(loading ? '読み込み中です。少し待ってからもう一度お試しください。' : '対象の訪問が見つかりません。');
+      return false;
+    }
+    const current = target.record ?? newRecordFor(target.visit, target.context, target.resident);
     const next = change(current);
-    if ('error' in next) { notify(next.error); return; }
+    if ('error' in next) { notify(next.error); return false; }
 
-    const ok = await saveRecord({ ...next, updatedAt: new Date().toISOString() });
-    if (ok) setReloadToken((n) => n + 1);
-  }, [dispatchKeyed, recordsKeyed, notify, saveRecord]);
+    return saveRecord({ ...next, updatedAt: new Date().toISOString() });
+  }, [findTarget, dispatch, visitRows, notify, saveRecord]);
 
   const stampStartAt = useCallback(async (visitId: string) => {
-    await mutateRecord(visitId, (r) => {
+    let message = '';
+    const ok = await mutateRecord(visitId, (r) => {
       const res = stampStart(r.plannedStart, r.plannedEnd);
       if (!res.ok) return { error: res.message };
-      notify(res.message);
+      message = res.message;
       return { ...r, actualStart: res.time };
     });
+    // 保存できていない打刻を「記録しました」と伝えない
+    if (ok) notify(message);
   }, [mutateRecord, notify]);
 
   const stampEndAt = useCallback(async (visitId: string) => {
-    await mutateRecord(visitId, (r) => {
+    let message = '';
+    const ok = await mutateRecord(visitId, (r) => {
       const res = stampEnd(r.plannedStart, r.plannedEnd, r.actualStart);
       if (!res.ok) return { error: res.message };
-      notify(res.message);
+      message = res.message;
       // legacy/index.html:3144。終了の打刻で状態が「済」になる
       return { ...r, actualEnd: res.time, status: '済' as const };
     });
+    if (ok) notify(message);
   }, [mutateRecord, notify]);
 
-  const approveVisit = useCallback(async (visitId: string) => {
+  const approveVisit = useCallback(async (visitId: string): Promise<boolean> => {
     const me = session;
     // legacy は権限が無いとき代理承認者の認証モーダルを出す（requireAdmin、:4306）。
     // Phase 1a は簡易ログインのため、その導線はステップ6以降で用意する
-    if (!canApprove(me)) { notify('承認権限がありません。'); return; }
-    await mutateRecord(visitId, (r) => ({
+    if (!canApprove(me)) { notify('承認権限がありません。'); return false; }
+    const ok = await mutateRecord(visitId, (r) => ({
       ...r,
       status: '完了' as const,
       approvedBy: me.staffId,
       approvedByName: me.name,
       approvedAt: new Date().toISOString(),
     }));
-    notify('承認しました（完了）');
+    // 承認は誰がいつ承認したかを残す法定要件のある操作になる。
+    // 保存できていないのに「承認しました」と伝えると、承認漏れに気づけない
+    if (ok) notify('承認しました（完了）');
+    return ok;
   }, [mutateRecord, session, notify]);
 
   const deleteRecord = useCallback(async (visitId: string): Promise<boolean> => {
@@ -303,8 +409,8 @@ export function CareStoreProvider({
   const approveAllToday = useCallback(async () => {
     const me = session;
     if (!canApprove(me)) { notify('承認権限がありません。'); return; }
-    const list = recordsKeyed?.result.status === 'ready' ? recordsKeyed.result.data.records : [];
-    const plan = dispatchKeyed?.result.status === 'ready' ? dispatchKeyed.result.data : null;
+    const list = records.status === 'ready' ? records.data.records : [];
+    const plan = dispatch.status === 'ready' ? dispatch.data : null;
     const ids = new Set(plan?.visits.map((v) => v.visitId) ?? []);
     // legacy/index.html:1824。対象はその日その職員の「済」。絞り込みは無視する
     const targets = list.filter((r) => ids.has(r.visitId) && r.status === '済');
@@ -313,19 +419,31 @@ export function CareStoreProvider({
 
     // legacy は全件で同じタイムスタンプを使う（:1828）
     const at = new Date().toISOString();
+    let done = 0;
+    let failure: string | null = null;
     for (const r of targets) {
-      await adapter.saveRecord({
-        ...r, status: '完了', approvedBy: me.staffId, approvedByName: me.name, approvedAt: at,
-        updatedAt: at,
-      });
+      try {
+        await adapter.saveRecord({
+          ...r, status: '完了', approvedBy: me.staffId, approvedByName: me.name, approvedAt: at,
+          updatedAt: at,
+        });
+        done += 1;
+      } catch (e) {
+        // 途中で失敗しても、そこまでに承認できた分は残す。
+        // 件数を偽らずに伝えることが、承認漏れに気づける唯一の手がかりになる
+        failure = e instanceof AdapterError ? e.userMessage : '保存に失敗しました。';
+        break;
+      }
     }
     setReloadToken((n) => n + 1);
-    notify(`${targets.length}件を承認しました（承認者：${me.name}）`);
-  }, [adapter, session, recordsKeyed, dispatchKeyed, notify]);
+    notify(failure === null
+      ? `${done}件を承認しました（承認者：${me.name}）`
+      : `${done}件を承認しましたが、残り${targets.length - done}件は承認できませんでした。${failure}`);
+  }, [adapter, session, records, dispatch, notify]);
 
   const value = useMemo<CareStore>(() => ({
     date, setDate,
-    session, signIn, signOut,
+    session, sessionRestoring, signIn, signOut,
     staffId, setStaffId,
     filter, setFilter,
     editingVisitId, openRecord, closeRecord,
@@ -338,7 +456,7 @@ export function CareStoreProvider({
     retry,
     notification, notify,
   }), [
-       date, session, signIn, signOut, staffId, filter,
+       date, session, sessionRestoring, signIn, signOut, staffId, setStaffId, filter,
        editingVisitId, openRecord, closeRecord, residentModalOpen, selectedResidentId, openResident,
        closeResident, staff, dispatch, records, badges, visitRows,
        saveRecord, deleteRecord, getPrefs, savePrefs, incidents, saveIncident,

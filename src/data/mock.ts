@@ -9,20 +9,12 @@
  * kpi-react 側の実フィールドは docs/plans/2026-09-10-carerecords-react-migration.md
  * の「## 3 既存の実装パターン」を参照。
  */
-import { SCHEMA_VERSION, buildVisitRecord, type Dispatch, type DispatchVisit, type ResidentBrief, type ServiceKind, type VisitRecord } from '../types/contract';
+import { SCHEMA_VERSION, buildVisitRecord, type Dispatch, type DispatchVisit, type ResidentBrief, type VisitRecord } from '../types/contract';
 import type { StaffAccount } from '../types/local';
+import { SERVICE_OPTIONS, TASK_OPTIONS } from '../domain/vocabulary';
 import { addDays, fmt, iso, nowMin, toMin } from '../utils/date';
 
 export const MOCK_FACILITY_ID = 'mock-facility';
-
-/** legacy/index.html:1640 の SERVICES と一致 */
-const SERVICES: ServiceKind[] = ['身体介護', '生活援助', '身体＋生活', '通院等乗降介助'];
-
-/** legacy/index.html:1641 の TASKS と一致 */
-const TASKS = [
-  '排泄介助', '食事介助', '入浴介助', '清拭・整容', '更衣介助', '服薬確認',
-  '体位変換', '移動・移乗', '調理', '掃除', '洗濯', '買い物', '見守り', '記録・連絡',
-];
 
 /**
  * 職員。kpi-react の staffs は Date.now() ベースの安定 ID を持つため、
@@ -171,7 +163,7 @@ export function mockDispatch(date: string, staffId: string): Dispatch | null {
     visits.push({
       visitId: `${date}-${staff.staffId}-${String(i).padStart(2, '0')}`,
       residentId: resident.residentId,
-      serviceName: SERVICES[i % SERVICES.length] ?? '身体介護',
+      serviceName: SERVICE_OPTIONS[i % SERVICE_OPTIONS.length] ?? '身体介護',
       startTime: fmt(clock),
       endTime: fmt(clock + dur),
       officeName: 'そわん訪問介護事業所',
@@ -250,7 +242,7 @@ export function mockSeedRecords(): VisitRecord[] {
           plannedEnd: v.endTime,
           actualStart: fmt(start),
           actualEnd: fmt(end),
-          tasks: TASKS.slice(0, 3),
+          tasks: [...TASK_OPTIONS.slice(0, 3)],
           vitals: { temperature: '', bloodPressure: '', pulse: '' },
           // legacy の seed も特記事項を空にしている。記載チェックの対象になる
           note: '',
@@ -281,5 +273,3 @@ export function isPastVisit(date: string, endTime: string): boolean {
   const m = end[1] ?? 0;
   return h * 60 + m < nowMin() - 5;
 }
-
-export { TASKS as MOCK_TASKS };

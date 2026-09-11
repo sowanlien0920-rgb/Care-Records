@@ -22,23 +22,37 @@ import { useCareStore } from '../../store/useCareStore';
 import { canApprove, isSupervisor } from '../../types/local';
 import { newRecordFor, recordOf } from '../../domain/visitStatus';
 import { clampToPlan, nowHM } from '../../domain/timeValidation';
+import { check, outOfPlan, NO_ISSUE_FINDING, type Finding } from '../../domain/compliance';
 import { SERVICE_OPTIONS, TASK_OPTIONS } from '../../domain/vocabulary';
 import { toMin } from '../../utils/date';
 import type { ServiceKind, VisitRecord, VisitStatus } from '../../types/contract';
 
 const STATUSES: VisitStatus[] = ['未完', '済', '完了', 'キャンセル'];
 
-/** legacy/index.html:3074-3082 の outOfPlan */
-function outOfPlan(r: VisitRecord): string {
-  const ps = toMin(r.plannedStart);
-  const pe = toMin(r.plannedEnd);
-  if (ps === null || pe === null) return '';
-  const as = toMin(r.actualStart);
-  const ae = toMin(r.actualEnd);
-  const bad: string[] = [];
-  if (as !== null && as < ps) bad.push(`開始 ${r.actualStart} が予定 ${r.plannedStart} より前`);
-  if (ae !== null && ae > pe) bad.push(`終了 ${r.actualEnd} が予定 ${r.plannedEnd} より後`);
-  return bad.join('／');
+/** legacy/index.html:2399-2404 と同じ表示。レベルごとにアイコンと見出し語が決まる */
+const LINT_VIEW = {
+  ng: { cls: 'lv-ng', ic: '✕', label: '要修正' },
+  warn: { cls: 'lv-warn', ic: '!', label: '確認' },
+  ok: { cls: 'lv-ok', ic: '✓', label: '' },
+} as const;
+
+/**
+ * 指摘1件。`.lintitem` の直下に `.ic` / `div` / `.fixbtn` を並べる（styles.css:348-360）。
+ * `.fixbtn` は border-color を currentColor で取るため、色を決めている
+ * `.lv-ng` / `.lv-warn` と同じ要素の子でないと枠線の色が変わる。
+ */
+function LintItem({ finding, onFix }: { finding: Finding; onFix?: () => void }) {
+  const v = LINT_VIEW[finding.level];
+  return (
+    <div className={`lintitem ${v.cls}`}>
+      <span className="ic">{v.ic}</span>
+      {/* legacy は <b> と本文の間が全角スペース（:2402）。半角に変えると詰まって見える */}
+      <div>{v.label && <b>{v.label}</b>}{v.label && '\u3000'}{finding.message}</div>
+      {finding.fix !== undefined && onFix !== undefined && (
+        <button className="fixbtn" onClick={onFix}>自動修正</button>
+      )}
+    </div>
+  );
 }
 
 type FieldKey = 'plan' | 'actual';
@@ -72,8 +86,15 @@ export function RecordModal() {
   const [edit, setEdit] = useState<{ key: string; draft: VisitRecord } | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [busy, setBusy] = useState(false);
+  /*
+   * 記載チェックの結果。null は「まだ実行していない」。
+   * legacy はモーダルを開くたびに #lintBox を空にする（:1881）ので、
+   * 下書きと同じく「どの訪問を開いているか」をキーにして持ち、開き直しで消えるようにする。
+   */
+  const [lint, setLint] = useState<{ key: string; list: Finding[] } | null>(null);
   const planRef = useRef<HTMLInputElement>(null);
   const actualRef = useRef<HTMLInputElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
   if (editingVisitId === null || visit === null || plan === null) return null;
 
@@ -88,6 +109,7 @@ export function RecordModal() {
   const setDraft = (fn: (d: VisitRecord) => VisitRecord) =>
     setEdit({ key: visit.visitId, draft: fn(draft) });
 
+  const findings = lint !== null && lint.key === editingVisitId ? lint.list : null;
   const wasApproved = saved?.status === '完了';
   const sup = isSupervisor(session);
   const frame = toMin(draft.plannedStart) !== null && toMin(draft.plannedEnd) !== null
@@ -135,6 +157,8 @@ export function RecordModal() {
     const bad = outOfPlan(next);
     if (bad && !approving) {
       if (!sup && !canApprove(session)) {
+        // legacy/index.html:2007。保存を止めるときは記載チェックの結果も一緒に出す
+        setLint({ key: next.visitId, list: check(next, resident?.carePlan) });
         setErrors({ actual: `実績時間は予定枠内で入力してください（${bad}）` });
         actualRef.current?.focus();
         return;
@@ -143,6 +167,23 @@ export function RecordModal() {
         `実績時間が予定枠外です。\n\n${bad}\n\n訪問介護の実績は、計画に定めた予定時間の枠内で記録するのが原則です。\nサービス時間が変わった場合は、予定時間そのものの見直しをご検討ください。\n\nこのまま保存しますか？（変更履歴に残ります）`,
       );
       if (!ok) return;
+    }
+
+    /*
+     * legacy/index.html:2030-2034。要修正があっても承認は続行できる。
+     * 記載チェックは警告であって承認の要件ではない、という legacy の強制力をそのまま写す
+     * （計画書 Q4）。ただし件数と全文は必ず見せる。
+     */
+    if (approving) {
+      const list = check(next, resident?.carePlan);
+      const ng = list.filter((f) => f.level === 'ng');
+      if (ng.length > 0) {
+        setLint({ key: next.visitId, list });
+        const go = window.confirm(
+          `記載チェックで${ng.length}件の要修正項目があります。\n\n・${ng.map((o) => o.message).join('\n・')}\n\nこのまま承認しますか？`,
+        );
+        if (!go) return;
+      }
     }
 
     // 承認まわり。承認者は記録に残す（法定要件）
@@ -364,15 +405,38 @@ export function RecordModal() {
           <button className="micbtn" onClick={() => notify('音声入力は Phase 1b で実装します')}>
             <span className="dot"></span>🎤 音声入力
           </button>
-          <button className="ghost" onClick={() => notify('記載チェックは Phase 1b で実装します')}>📋 記載チェック</button>
+          <button className="ghost" id="lintBtn" aria-controls="lintBox"
+            onClick={() => setLint({ key: visit.visitId, list: check(draft, resident?.carePlan) })}>📋 記載チェック</button>
         </div>
         <div className="fld">
           <label htmlFor="fNote">特記事項</label>
           {/* id を外すと #fNote{min-height:118px}（styles.css:242）が効かなくなる */}
-          <textarea id="fNote" placeholder="ご本人の状態、申し送り事項など" value={draft.note}
+          <textarea id="fNote" ref={noteRef} placeholder="ご本人の状態、申し送り事項など" value={draft.note}
             onChange={(e) => set('note', e.target.value)} />
         </div>
-        <div className="lint" id="lintBox"></div>
+        {/*
+          * legacy は .lint の直下に .lintitem を並べる（:2399-2404）。
+          * 余分なラッパーを挟むと flex の gap が効かない。
+          * aria-live は legacy に無いが、押した結果が画面のどこかに出たことを
+          * 読み上げに伝えないと、キーボード操作では変化に気づけない
+          */}
+        <div className="lint" id="lintBox" aria-live="polite">
+          {findings !== null && (findings.length === 0
+            ? <LintItem finding={NO_ISSUE_FINDING} />
+            // 指摘に安定した ID が無いのは legacy も同じ（data-fix は配列の添字、:2403）
+            : findings.map((f, i) => (
+              <LintItem key={`${f.level}-${i}`} finding={f} onFix={() => {
+                const fix = f.fix;
+                if (fix === undefined) return;
+                const fixed = { ...draft, note: draft.note.replace(fix.pattern, fix.replacement) };
+                setEdit({ key: visit.visitId, draft: fixed });
+                setLint({ key: visit.visitId, list: check(fixed, resident?.carePlan) });
+                notify('表現を修正しました');
+                // 押したボタンは再判定で消える。行き先を決めないとフォーカスが body に落ちる
+                noteRef.current?.focus();
+              }} />
+            )))}
+        </div>
       </div>
     </Modal>
   );

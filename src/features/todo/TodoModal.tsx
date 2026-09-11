@@ -17,8 +17,12 @@
 import { useState } from 'react';
 import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
-import { isSupervisor } from '../../types/local';
+import type { RecordFieldPatch } from '../../store/context';
+import type { VisitRow } from '../../data/adapter';
+import { blankRecordPrefs, isSupervisor } from '../../types/local';
 import { todoStage } from '../../domain/visitStatus';
+import { check, countNg } from '../../domain/compliance';
+import { generateNote } from '../../domain/noteBuilder';
 import { MOOD_DEFAULT, MOOD_OPTIONS } from '../../domain/vocabulary';
 import { iso } from '../../utils/date';
 
@@ -33,7 +37,7 @@ function dowOf(s: string): string {
 export function TodoModal() {
   const {
     panel, closePanel, visitRows, session, notify, retry,
-    openRecord, setDate, setStaffId, stampStartAt, stampEndAt, updateRecordFields,
+    openRecord, setDate, setStaffId, stampStartAt, stampEndAt, updateRecordFields, getPrefs,
   } = useCareStore();
   const sup = isSupervisor(session);
   const [scope, setScope] = useState<'me' | 'all'>('me');
@@ -47,6 +51,8 @@ export function TodoModal() {
    * 打つたびに全件再取得が走り、入力中の行ごと再描画されることになる
    */
   const [memoDraft, setMemoDraft] = useState<Record<string, string>>({});
+  /** 生成中の行。legacy はボタンを disabled にして「作成中…」に差し替える（:3420） */
+  const [generating, setGenerating] = useState<string | null>(null);
 
   if (panel !== 'todo') return null;
 
@@ -80,6 +86,38 @@ export function TodoModal() {
       delete next[visitId];
       return next;
     });
+  }
+
+  /*
+   * 行内の「✨ 特記事項」。legacy/index.html:3418-3446。
+   *
+   * legacy は生成後に行の DOM を手書きで緑の「作成しました」に差し替えるが、
+   * それをすると late クラスが落ち、曜日と実施内容が元の行と食い違い、件数表示も
+   * 更新されない。Q6 の確定どおり、素直に再描画してトーストで伝える。
+   * 本文が入るとステージが -1 になるので、行は一覧から消える。
+   */
+  async function generateFor(r: VisitRow) {
+    if (generating !== null) return;
+    const record = r.record;
+    if (record === undefined) { notify('記録がありません。'); return; }
+    setGenerating(r.visit.visitId);
+    try {
+      // legacy は todoSyncRow で行内の様子・メモを先に取り込んでから生成する（:3419）
+      const pending = memoDraft[r.visit.visitId];
+      const source = pending === undefined ? record : { ...record, memo: pending.trim() };
+      const prefs = await getPrefs(r.visit.residentId).catch(() => blankRecordPrefs());
+      const text = await generateNote({ record: source, plan: r.resident?.carePlan, prefs });
+      const patch: RecordFieldPatch = { note: text, noteSource: 'template' };
+      if (pending !== undefined) patch.memo = pending.trim();
+      const ok = await updateRecordFields(r.visit.visitId, patch);
+      if (!ok) return;
+      const ng = countNg(check({ ...source, note: text }, r.resident?.carePlan));
+      notify(ng > 0
+        ? `作成しました（記載チェックで${ng}件の要修正）`
+        : '特記事項を作成しました。内容をご確認ください');
+    } finally {
+      setGenerating(null);
+    }
   }
 
   const counts = [0, 0, 0];
@@ -169,7 +207,9 @@ export function TodoModal() {
                     {st === 1 && <button className="mini stop" onClick={() => { void stampEndAt(r.visit.visitId); }}>終了</button>}
                     {st === 2 && (
                       <button className="mini" style={{ background: 'linear-gradient(120deg,#6a4bd6,#2b7ee6)', color: '#fff', border: 0 }}
-                        onClick={() => notify('特記事項の自動作成は Phase 1b で実装します')}>✨ 特記事項</button>
+                        disabled={generating !== null}
+                        onClick={() => { void generateFor(r); }}>
+                        {generating === r.visit.visitId ? '作成中…' : '✨ 特記事項'}</button>
                     )}
                     <button className="mini" onClick={open}>記録</button>
                   </span>

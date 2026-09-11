@@ -75,6 +75,8 @@ export function CareStoreProvider({
   const [panel, setPanel] = useState<PanelKind | null>(null);
   const [incidentsKeyed, setIncidentsKeyed] = useState<Keyed<Incident[]> | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  /** 職員一覧の再取得。retry() のときだけ進める */
+  const [staffToken, setStaffToken] = useState(0);
 
   const [staffKeyed, setStaffKeyed] = useState<Keyed<StaffAccount[]> | null>(null);
   const [dispatchKeyed, setDispatchKeyed] = useState<Keyed<Dispatch | null> | null>(null);
@@ -95,9 +97,22 @@ export function CareStoreProvider({
     if (notifyTimer.current !== null) clearTimeout(notifyTimer.current);
   }, []);
 
-  const retry = useCallback(() => setReloadToken((n) => n + 1), []);
+  // 再試行は「取れなかったものを取り直す」操作なので、職員一覧も含めて全部取り直す
+  const retry = useCallback(() => {
+    setStaffToken((n) => n + 1);
+    setReloadToken((n) => n + 1);
+  }, []);
 
-  const staffKey = `${reloadToken}`;
+  /*
+   * 職員一覧は記録の保存では変わらないので、記録の再取得とは別のトークンで持つ。
+   *
+   * reloadToken に載せると、記録を1件保存するたびに職員一覧が loading に戻り、
+   * session（保存した ID と職員一覧から導く）が一瞬 null になる。
+   * Shell は session === null を未ログインとして StaffPicker を返すため、
+   * 開いているモーダルごと画面全体がアンマウントされる。
+   * 未完了一覧の様子・メモの保存や、一括作成の進捗が消えるのはこれが原因だった。
+   */
+  const staffKey = `${staffToken}`;
   const staff = useMemo(() => resolve(staffKeyed, staffKey), [staffKeyed, staffKey]);
 
   /*

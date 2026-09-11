@@ -9,7 +9,9 @@
  * - CSV も絞り込みを無視して全状態を出す（:1833）
  * - 0件の文言は絞り込みの有無で変わらない（:1747）
  */
+import { useState } from 'react';
 import { useCareStore } from '../../store/useCareStore';
+import { BulkNoteModal } from './BulkNoteModal';
 import { deriveStatus, recordOf } from '../../domain/visitStatus';
 import { canApprove } from '../../types/local';
 import { toMin } from '../../utils/date';
@@ -34,8 +36,10 @@ export function VisitList() {
     : sorted.filter((v) => deriveStatus(v, recordOf(v.visitId, recs)) === filter);
 
   const later = (name: string) => () => notify(`${name}はステップ6で実装します`);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   return (
+    <>
     <div className="panel">
       <div className="panel-head">
         <h2>サービス実施一覧</h2>
@@ -44,7 +48,7 @@ export function VisitList() {
         {/* legacy は .chipbtn.primary の青をインライン style で紫に上書きしている（:866） */}
         <button className="chipbtn primary" id="bulkBtn"
           style={{ background: 'linear-gradient(120deg,#6a4bd6,#2b7ee6)', boxShadow: '0 4px 12px rgba(90,70,210,.28)' }}
-          onClick={later('特記事項の一括作成')}>✨ 特記事項を一括作成</button>
+          onClick={() => setBulkOpen(true)}>✨ 特記事項を一括作成</button>
         {/* legacy/index.html:4240。承認権限のある職員にだけ出す */}
         {canApprove(session) && (
           <button className="chipbtn" id="approveAll" onClick={() => { void approveAllToday(); }}>一括承認</button>
@@ -99,5 +103,8 @@ export function VisitList() {
         ))}
       </div>
     </div>
+    {/* legacy の #bulkMask（:989）。.mask は position:fixed なので置き場所は表示に影響しない */}
+    {bulkOpen && <BulkNoteModal onClose={() => setBulkOpen(false)} />}
+    </>
   );
 }

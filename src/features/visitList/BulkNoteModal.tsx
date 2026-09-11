@@ -70,14 +70,21 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
     : '';
 
   /*
-   * 対象。legacy/index.html:2805-2814 と同じ条件。
+   * 対象。legacy/index.html:2805-2814 とほぼ同じ条件。
    * 実施一覧の絞り込み（cur.filter）は見ない。画面で「未完」だけ表示していても対象は変わらない。
-   * 「完了」（承認済み）も対象に入るのは legacy どおり。
+   *
+   * ── legacy から意図的に変えた点 ────────────────────────
+   * **承認済み（完了）は対象から外す。** legacy は含んでいたため、承認権限の無い職員でも
+   * 承認済み記録の特記事項を一括で差し替えられた。RecordFieldPatch は承認欄を書き換えないので、
+   * 承認者が確認していない本文に承認印が残ることになる。legacy は変更履歴に痕跡を残していたが、
+   * Phase 1b では auditLog が対象外（Q1）なので痕跡すら残らない。
+   * 承認済みの記録を作り直すときは、権限を検査する記録モーダルから行う。
    */
   const items: VisitRow[] = rows
     .filter((r) => r.date === date
       && (effScope === 'all' || r.staffId === staffId)
       && deriveStatus(r.visit, r.record) !== 'キャンセル'
+      && deriveStatus(r.visit, r.record) !== '完了'
       && (incomplete || Boolean(r.record?.actualStart && r.record?.actualEnd))
       && (over === 'over' || !(r.record?.note ?? '')))
     .sort((a, b) => (a.visit.startTime + a.staffName).localeCompare(b.visit.startTime + b.staffName));
@@ -137,6 +144,7 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
       setDone(finished);
     }
 
+    // busy が真のままだと、閉じることも再実行もできなくなる
     setBusy(false);
     setSummary(`作成 ${ok}件${err ? ` ／ 失敗 ${err}件` : ''}${ngTotal ? ` ／ 要修正の指摘 ${ngTotal}件` : ''}`);
     notify(abortRef.current ? `中止しました（${ok}件作成）` : `${ok}件の特記事項を作成しました`);
@@ -209,14 +217,18 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
         <h3>対象一覧 <span className="bchip" id="bCount">{shown.length}件</span></h3>
         <div className="bprog"><div className="bar" id="bBar" style={{ width: `${pct}%` }}></div></div>
         <div className="plist" id="bList">
-          {/* 取得できていないことを「対象0件」と同じ見た目にすると、作成漏れに気づけない */}
-          {visitRows.status === 'loading' && (
+          {/*
+            * 取得できていないことを「対象0件」と同じ見た目にすると、作成漏れに気づけない。
+            * ただし実行中（frozen）は、保存のたびに走る再取得で行が消えないよう、
+            * 掴んだ一覧をそのまま出し続ける
+            */}
+          {frozen === null && visitRows.status === 'loading' && (
             <div className="empty" style={{ padding: 26 }}><div className="ico">⏳</div><p>読み込んでいます…</p></div>
           )}
-          {visitRows.status === 'error' && (
+          {frozen === null && visitRows.status === 'error' && (
             <div className="empty" style={{ padding: 26 }}><div className="ico">⚠️</div><p>{visitRows.message}</p></div>
           )}
-          {visitRows.status === 'ready' && (shown.length === 0
+          {(frozen !== null || visitRows.status === 'ready') && (shown.length === 0
             ? (
               <div className="empty" style={{ padding: 26 }}><div className="ico">✓</div>
                 <p>条件に合う記録はありません。<br />条件を変えるか、日付・職員を切り替えてください。</p>

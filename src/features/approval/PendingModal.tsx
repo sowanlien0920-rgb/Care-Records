@@ -46,6 +46,8 @@ export function PendingModal() {
   const [kind, setKind] = useState('done');
   const [order, setOrder] = useState('old');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** 承認中。確認文面が長くなったぶん、二度押しで承認が重なりやすい */
+  const [busy, setBusy] = useState(false);
 
   if (panel !== 'pending') return null;
 
@@ -96,6 +98,7 @@ export function PendingModal() {
   });
 
   async function approveSelected() {
+    if (busy) return;
     const targets = selectable.filter((r) => selected.has(r.visit.visitId));
     if (targets.length === 0) { notify('承認する記録を選択してください'); return; }
     const noNoteN = targets.filter((r) => !(r.record?.note ?? '').trim()).length;
@@ -107,9 +110,14 @@ export function PendingModal() {
     if (noNoteN || ngN) msg += '\n\n内容を確認せずに承認すると、実地指導で指摘を受けるおそれがあります。';
     if (!window.confirm(`${msg}\n\n承認しますか？`)) return;
     if (!canApprove(session)) { notify('承認権限がありません。'); return; }
+    setBusy(true);
     let done = 0;
-    for (const t of targets) {
-      if (await approveVisit(t.visit.visitId)) done += 1;
+    try {
+      for (const t of targets) {
+        if (await approveVisit(t.visit.visitId)) done += 1;
+      }
+    } finally {
+      setBusy(false);
     }
     setSelected(new Set());
     // 承認できた件数だけを伝える。件数を偽ると、承認されていない記録が
@@ -124,6 +132,9 @@ export function PendingModal() {
    * 母集団は画面が描いている list そのもの（legacy も同じ）。
    */
   const exportCsv = () => {
+    // 未承認の記録は請求前の確認に使う。「まだ読めていない」を0件と言わない
+    if (visitRows.status === 'loading') { notify('読み込み中です。少し待ってからもう一度お試しください。'); return; }
+    if (visitRows.status === 'error') { notify('記録を読み取れていないため出力できません。再試行してください。'); return; }
     if (list.length === 0) { notify('出力するデータがありません'); return; }
     const head = ['サービス提供日', '曜日', '経過日数', '担当職員', '利用者', 'サービス種別',
       '予定', '実績', '提供分', '状態', '特記事項', '要修正件数'];
@@ -159,7 +170,8 @@ export function PendingModal() {
           <span className="sumline">{selected.size}件を選択中</span>
           <div className="spacer"></div>
           <button className="bt" onClick={exportCsv}>CSV出力</button>
-          <button className="bt save" onClick={() => { void approveSelected(); }}>選択した記録を承認</button>
+          <button className="bt save" disabled={busy} onClick={() => { void approveSelected(); }}>
+            {busy ? '承認中…' : '選択した記録を承認'}</button>
         </>
       }
     >

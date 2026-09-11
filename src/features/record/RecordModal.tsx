@@ -134,7 +134,7 @@ export function RecordModal() {
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const memoRef = useRef<HTMLInputElement>(null);
   // 特記事項とメモで1つの .mic-live を共有する（legacy:3242-3243）
-  const speech = useSpeechInput();
+  const speech = useSpeechInput(editingVisitId !== null);
 
   /*
    * 記録支援設定を取りに行く。ResidentModal.tsx:48-55 と同じ形にしてある。
@@ -162,9 +162,7 @@ export function RecordModal() {
    * 残しておくと同じ訪問を開き直したときに前回の指摘や「元に戻す」が生きている。
    */
   const close = () => {
-    // legacy/index.html:1931。closeModal は先頭で micStop する。
-    // 止めないと、閉じた画面の下書きに認識結果が入り続ける
-    speech.stop();
+    // 録音は useSpeechInput(visible) が editingVisitId を見て止める
     setLint(null);
     setStyle(null);
     setUndo(null);
@@ -182,10 +180,19 @@ export function RecordModal() {
     ? edit.draft
     : saved ?? newRecordFor(visit, plan, resident);
 
-  const set = <K extends keyof VisitRecord>(k: K, v: VisitRecord[K]) =>
-    setEdit({ key: visit.visitId, draft: { ...draft, [k]: v } });
+  /*
+   * 下書きの更新は必ず「直前の下書き」から作る。
+   *
+   * 描画時の draft を閉じ込めると、音声入力や定型文生成のように
+   * 「押した後に届く」経路が、押した時点の値で他の項目を上書きしてしまう
+   * （録音中に実績時刻やバイタルを入れると、次の確定結果で巻き戻る）。
+   */
   const setDraft = (fn: (d: VisitRecord) => VisitRecord) =>
-    setEdit({ key: visit.visitId, draft: fn(draft) });
+    setEdit((prev) => ({
+      key: visitKey,
+      draft: fn(prev !== null && prev.key === visitKey ? prev.draft : draft),
+    }));
+  const set = <K extends keyof VisitRecord>(k: K, v: VisitRecord[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
   const findings = lint !== null && lint.key === editingVisitId ? lint.list : null;
   const loadedPrefs = prefs !== null && prefs.key === visit.residentId ? prefs.value : null;
@@ -318,7 +325,8 @@ export function RecordModal() {
       const text = await generateNote({ record: collect(draft), plan: resident?.carePlan, prefs: { ...loadedPrefs, tone, length } });
       const next: VisitRecord = { ...draft, note: text, noteSource: 'template' };
       setUndo({ key: visitKey, note: draft.note, source: draft.noteSource });
-      setEdit({ key: visitKey, draft: next });
+      // 生成中に他の項目を触っていても、その入力を捨てない
+      setDraft((d) => ({ ...d, note: text, noteSource: 'template' }));
       setBadge({ key: visitKey, text: '📄 定型文で作成' });
       setLint({ key: visitKey, list: check(next, resident?.carePlan) });
       notify('特記事項を作成しました');
@@ -556,7 +564,7 @@ export function RecordModal() {
                 id: 'note',
                 el: noteRef.current,
                 // 音声で足したぶんも人が書いた本文として扱う
-                onChange: (v) => setEdit({ key: visit.visitId, draft: { ...draft, note: v, noteSource: 'manual' } }),
+                onChange: (v) => setDraft((d) => ({ ...d, note: v, noteSource: 'manual' })),
               })}>
               <span className="dot"></span>{speech.listening === 'note' ? '■ 停止' : '🎤 音声入力'}
             </button>
@@ -569,7 +577,7 @@ export function RecordModal() {
           {/* legacy は undoStack があるときだけ表示する（:2734 / :2754-2759） */}
           {undoable !== null && (
             <button className="ghost" id="undoBtn" onClick={() => {
-              setEdit({ key: visit.visitId, draft: { ...draft, note: undoable.note, noteSource: undoable.source } });
+              setDraft((d) => ({ ...d, note: undoable.note, noteSource: undoable.source }));
               setUndo(null);
               setBadge(null);
               notify('元に戻しました');
@@ -593,7 +601,7 @@ export function RecordModal() {
             onChange={(e) => {
               // 人が書いた本文であることを記録に残す。legacy は noteSrc を書く経路が
               // 一括作成と未完了一覧にしか無く、手入力は常に未設定のままだった
-              setEdit({ key: visit.visitId, draft: { ...draft, note: e.target.value, noteSource: 'manual' } });
+              setDraft((d) => ({ ...d, note: e.target.value, noteSource: 'manual' }));
             }} />
         </div>
         {/* legacy/index.html:968。.on が無いと表示されない（鉄則5） */}
@@ -618,7 +626,7 @@ export function RecordModal() {
                 const fix = f.fix;
                 if (fix === undefined) return;
                 const fixed = { ...draft, note: draft.note.replace(fix.pattern, fix.replacement) };
-                setEdit({ key: visit.visitId, draft: fixed });
+                setDraft(() => fixed);
                 setLint({ key: visit.visitId, list: check(fixed, resident?.carePlan) });
                 notify('表現を修正しました');
                 // 押したボタンは再判定で消える。行き先を決めないとフォーカスが body に落ちる

@@ -12,9 +12,15 @@
  * ここでは DOM を一切読まない。記録モーダルは編集中の draft を引数として渡すことで
  * 「編集中の本文で判定する」を再現する（計画書 Q10）。
  *
- * 自動修正は、検出した文字列がそのまま置換対象になるよう正規表現を揃えてある。
- * legacy は検出と置換が非対称で、「薬を飲ませて」「してあげる」等は
- * 押しても何も置換されなかった（計画書 Q11）。
+ * ── 自動修正の範囲（Q11 の再検討） ──────────────────────
+ * legacy は検出と置換が非対称で、「薬を飲ませて」等は押しても何も起きなかった。
+ * これを「検出した語幹＋活用語尾」をまとめて置換する形に広げたところ、
+ * **否定形が肯定文に化ける**という、legacy より悪い壊れ方をした。
+ *   例: 「薬を飲ませていません」→「服薬の確認を行いましたいません」
+ * 実施していない行為を実施したと読める本文が法定文書に入るため、
+ * 置換は**置き換えても文意が反転しない活用形に限る**。
+ * 該当しない語形では `fix` を付けない（＝自動修正ボタンを出さない）ので、
+ * 「押しても何も起きない」という legacy の欠陥も同時に消える。
  *
  * 移植元: legacy/index.html:2327-2346（LINT_RULES）、:2348-2392（lintNote）、
  *         :3074-3082（outOfPlan）
@@ -35,7 +41,10 @@ import { toMin } from '../utils/date';
 export type Finding = {
   level: 'ng' | 'warn' | 'ok';
   message: string;
-  /** 自動修正。検出した表現を、そのまま置換できる形で持つ */
+  /**
+   * 自動修正。本文に実際に現れた語形に対してだけ付く。
+   * `pattern` は呼び出しごとに作り直すので、`lastIndex` の持ち回りが起きない。
+   */
   fix?: { pattern: RegExp; replacement: string };
 };
 
@@ -45,11 +54,18 @@ export const NO_ISSUE_FINDING: Finding = {
   message: '記載上の問題は見つかりませんでした。最終確認のうえ保存してください。',
 };
 
+/**
+ * 自動修正の候補。`pattern` は `g` を付けずに持つ。
+ * 「本文に含まれるか」を `test()` で見るため、`lastIndex` を持たせない。
+ */
+type Fix = { pattern: RegExp; replacement: string };
+
 type LintRule = {
   re: RegExp;
   level: 'ng' | 'warn';
   message: string;
-  fix?: { pattern: RegExp; replacement: string };
+  /** 先に一致したものを1つだけ使う。長い語形から順に並べる */
+  fixes?: readonly Fix[];
 };
 
 /**
@@ -74,11 +90,14 @@ const LINT_RULES: readonly LintRule[] = [
     level: 'ng',
     message: '服薬は「確認・見守り・介助」の範囲で記載します（服用はご本人が行う）。',
     /*
-     * legacy の置換は完全形6種だけを見ていた（:2333）ため、検出される
-     * 「薬を飲ませて」「服薬させる」等は押しても置換されなかった。
-     * 検出と同じ語幹に活用語尾を足して、検出したものが必ず置換されるようにする。
+     * 「実施した」と読める語形だけを置換する。否定・打消し（飲ませていません /
+     * 飲ませない / 投薬しておりません）は1つも一致しないので、ボタンが出ない。
+     * 「〜たい」（願望）に食い込まないよう、過去形には後読みを付けてある。
      */
-    fix: { pattern: /(薬を飲ませ|服薬させ|投薬し)(ていただきました|ていただいた|ていました|ています|ていた|ている|ました|ます|た|る|て)?/g, replacement: '服薬の確認を行いました' },
+    fixes: [
+      { pattern: /(薬を飲ませました|薬を飲ませています|薬を飲ませている|服薬させました|服薬させています|服薬させている|投薬しました)/, replacement: '服薬の確認を行いました' },
+      { pattern: /(薬を飲ませた|服薬させた|投薬した)(?!い)/, replacement: '服薬の確認を行いました' },
+    ],
   },
   {
     re: /(草むしり|草取り|庭の手入れ|ペットの世話|犬の散歩|来客の対応|正月料理|おせち|大掃除|窓拭き|換気扇の掃除|模様替え|家具の移動|洗車|花壇)/,
@@ -99,14 +118,22 @@ const LINT_RULES: readonly LintRule[] = [
     re: /徘徊/,
     level: 'warn',
     message: '「徘徊」は不適切表現とされています。行動そのものを客観的に記載してください。',
-    fix: { pattern: /徘徊/g, replacement: 'ひとりで外に出られる行動' },
+    fixes: [{ pattern: /徘徊/, replacement: 'ひとりで外に出られる行動' }],
   },
   {
     re: /してあげ(た|ました|る)/,
     level: 'warn',
     message: '「〜してあげる」は対等な関係を欠く表現です。「〜を行いました」等に改めてください。',
-    // legacy は「してあげました」だけを置換していた（:2343）。検出する3活用すべてを対象にする
-    fix: { pattern: /してあげ(た|ました|る)/g, replacement: 'しました' },
+    /*
+     * legacy は「してあげました」だけを置換していた（:2343）。検出する3活用すべてを
+     * 対象にするが、置換後も文が閉じるよう活用ごとに置換先を分ける。
+     * 「してあげたい」（願望）は対象外にする
+     */
+    fixes: [
+      { pattern: /してあげました/, replacement: 'しました' },
+      { pattern: /してあげる/, replacement: 'する' },
+      { pattern: /してあげた(?!い)/, replacement: 'した' },
+    ],
   },
   {
     re: /(と思われる|らしい|気がする|だろう|みたい)/,
@@ -161,10 +188,13 @@ export function check(record: VisitRecord, plan: CarePlanSnapshot | undefined): 
   for (const rule of LINT_RULES) {
     const m = txt.match(rule.re);
     if (m === null) continue;
+    const message = `「${m[0]}」：${rule.message}`;
+    // 本文に実際に現れた語形にだけ自動修正を出す。無ければボタン自体を出さない
+    const fix = rule.fixes?.find((f) => f.pattern.test(txt));
     // fix はプロパティごと省く。exactOptionalPropertyTypes 下では undefined を明示代入できない
-    out.push(rule.fix === undefined
-      ? { level: rule.level, message: `「${m[0]}」：${rule.message}` }
-      : { level: rule.level, message: `「${m[0]}」：${rule.message}`, fix: rule.fix });
+    out.push(fix === undefined
+      ? { level: rule.level, message }
+      : { level: rule.level, message, fix: { pattern: new RegExp(fix.pattern.source, 'g'), replacement: fix.replacement } });
   }
 
   // 訪問介護計画との突き合わせ（legacy:2361-2366）。計画にサービス内容が無ければ判定しない

@@ -56,7 +56,7 @@ export function TodoModal() {
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   /** 行ごとのメモ入力欄。音声入力がカーソル位置を読むのに要る */
   const memoRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const speech = useSpeechInput();
+  const speech = useSpeechInput(panel === 'todo');
 
   if (panel !== 'todo') return null;
 
@@ -130,9 +130,6 @@ export function TodoModal() {
     }
   }
 
-  /** 閉じるときに録音を止める。legacy は未完了一覧を閉じても止まらなかった */
-  const closeTodo = () => { speech.stop(); closePanel(); };
-
   const counts = [0, 0, 0];
   list.forEach((r) => { const st = todoStage(r.visit, r.record); if (st >= 0 && st <= 2) counts[st] = (counts[st] ?? 0) + 1; });
   const late = list.filter((r) => r.date < today).length;
@@ -141,13 +138,13 @@ export function TodoModal() {
     <Modal
       title="未完了の訪問"
       subtitle={`${session ? `${session.name} さん` : ''}／終了まで済んでいない訪問をこの画面から記録できます`}
-      onClose={closeTodo}
+      onClose={closePanel}
       width={1060}
       footer={
         <>
           <span className="sumline">{list.length ? 'この画面から打刻・記録の作成ができます。' : ''}</span>
           <div className="spacer"></div>
-          <button className="bt" onClick={closeTodo}>閉じる</button>
+          <button className="bt" onClick={closePanel}>閉じる</button>
         </>
       }
     >

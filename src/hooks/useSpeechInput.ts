@@ -74,7 +74,13 @@ export function insertAtCaret(
   return { value: before + ins + after, caret: pos + ins.length };
 }
 
-export function useSpeechInput() {
+/**
+ * @param visible この画面が見えているか。false になったら録音を止める。
+ *   閉じる導線ごとに `stop()` を書く形は、導線が増えるたびに取りこぼす。
+ *   このコンポーネントは閉じてもアンマウントされないため、
+ *   「見えなくなったら止まる」を1箇所の不変条件として持たせる。
+ */
+export function useSpeechInput(visible = true) {
   const { notify } = useCareStore();
   const supported = speechSupported();
 
@@ -184,8 +190,17 @@ export function useSpeechInput() {
     }
   }, [supported, notify, stop]);
 
-  // 画面を離れるときに止める。legacy はモーダルを閉じる経路の一部でしか止めていなかった
-  useEffect(() => stop, [stop]);
+  /*
+   * 見えている間だけ後始末を仕掛けておく。
+   *
+   * visible が false になった時点（モーダルを閉じた・別の画面へ移った）と、
+   * 画面ごと離れるときの両方で、この cleanup として stop() が走る。
+   * 「閉じる導線ごとに stop() を書く」形は、導線が増えるたびに取りこぼす。
+   */
+  useEffect(() => {
+    if (!visible) return;
+    return stop;
+  }, [visible, stop]);
 
   return { supported, listening, interim, heard, start, stop };
 }

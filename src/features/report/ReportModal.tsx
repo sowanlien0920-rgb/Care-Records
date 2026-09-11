@@ -56,6 +56,12 @@ export function ReportModal() {
    *   - 0件なら中断する（legacy はヘッダ行だけのファイルを出す）
    */
   const exportCsv = () => {
+    /*
+     * 帳票は請求突合と実地指導に使う。「まだ読めていない」と「0件だった」を
+     * 同じ文言で返すと、記録が無いことの証明として読めてしまう（:134-137 と同じ理由）
+     */
+    if (visitRows.status === 'loading') { notify('読み込み中です。少し待ってからもう一度お試しください。'); return; }
+    if (visitRows.status === 'error') { notify('記録を読み取れていないため出力できません。再試行してください。'); return; }
     if (type === 'staff') {
       const agg = staffReport(inMonth.filter((r) => r.staffId === curStaff));
       if (agg.list.length === 0) { notify('出力するデータがありません'); return; }
@@ -102,7 +108,9 @@ export function ReportModal() {
         <>
           <button className="bt" onClick={exportCsv}>CSV出力</button>
           <div className="spacer"></div>
-          <button className="bt save" onClick={() => window.print()}>🖨 印刷 / PDF保存</button>
+          {/* 読めていない状態のまま印刷させない。帳票は請求突合の証跡になる */}
+          <button className="bt save" disabled={visitRows.status !== 'ready'}
+            onClick={() => window.print()}>🖨 印刷 / PDF保存</button>
         </>
       }
     >

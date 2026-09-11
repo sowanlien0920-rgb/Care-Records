@@ -47,6 +47,12 @@ export function VisitList() {
    * 母集団は一覧が描いている visible そのものにしてある。
    */
   const exportCsv = () => {
+    // 「まだ読めていない」を「0件だった」と同じ文言で返すと、出力漏れに気づけない
+    if (loading) { notify('読み込み中です。少し待ってからもう一度お試しください。'); return; }
+    if (dispatch.status === 'error' || records.status === 'error') {
+      notify('記録を読み取れていないため出力できません。再試行してください。');
+      return;
+    }
     if (plan === null || visible.length === 0) { notify('出力するデータがありません'); return; }
     const head = ['日付', '職員', '利用者', 'サービス種別', '予定開始', '予定終了', '実績開始', '実績終了',
       '実施分', '状態', '体温', '血圧', '脈拍', '実施内容', '特記事項'];

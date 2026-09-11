@@ -35,6 +35,12 @@ const ERROR_MESSAGE: Readonly<Record<string, string>> = {
   'network': '音声認識サーバーに接続できませんでした。ネットワークをご確認ください。',
 };
 
+/**
+ * 非対応の端末に出す案内。legacy はボタンを黙って隠すだけで理由を出さない（:3239）。
+ * 出さないと「ボタンが無い＝壊れている」と受け取られる（計画書 Q9）。
+ */
+export const SPEECH_UNSUPPORTED_HINT = '音声入力はこの端末では使えません（Chrome / Edge でご利用ください）';
+
 /** 音声認識が使えるか。secure context（localhost を含む）でのみ実装が載る */
 export function speechSupported(): boolean {
   return typeof window !== 'undefined'
@@ -76,6 +82,8 @@ export function useSpeechInput() {
   const [listening, setListening] = useState<string | null>(null);
   /** 中間結果。`.mic-live` にだけ出し、入力欄には入れない */
   const [interim, setInterim] = useState('');
+  /** 1件でも結果が来たか。legacy は最初の結果で .mic-live の文言を切り替える（:3200 → :3216） */
+  const [heard, setHeard] = useState(false);
 
   const recRef = useRef<SpeechRecognition | null>(null);
   const targetRef = useRef<SpeechTarget | null>(null);
@@ -91,6 +99,7 @@ export function useSpeechInput() {
     targetRef.current = null;
     setListening(null);
     setInterim('');
+    setHeard(false);
   }, []);
 
   const start = useCallback((target: SpeechTarget) => {
@@ -136,6 +145,7 @@ export function useSpeechInput() {
         }
       }
       setInterim(itr);
+      setHeard(true);
     };
 
     rec.onerror = (ev) => {
@@ -156,6 +166,7 @@ export function useSpeechInput() {
     onRef.current = true;
     setListening(target.id);
     setInterim('');
+    setHeard(false);
     try {
       rec.start();
     } catch {
@@ -167,5 +178,5 @@ export function useSpeechInput() {
   // 画面を離れるときに止める。legacy はモーダルを閉じる経路の一部でしか止めていなかった
   useEffect(() => stop, [stop]);
 
-  return { supported, listening, interim, start, stop };
+  return { supported, listening, interim, heard, start, stop };
 }

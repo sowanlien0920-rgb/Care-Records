@@ -14,7 +14,7 @@
  * ステージ2として未完了に残る。
  * バッジは常に「自分の担当・本日まで」固定で、この画面の絞り込みと連動しない。
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
 import type { RecordFieldPatch } from '../../store/context';
@@ -23,6 +23,7 @@ import { blankRecordPrefs, isSupervisor } from '../../types/local';
 import { todoStage } from '../../domain/visitStatus';
 import { check, countNg } from '../../domain/compliance';
 import { generateNote } from '../../domain/noteBuilder';
+import { useSpeechInput, SPEECH_UNSUPPORTED_HINT } from '../../hooks/useSpeechInput';
 import { MOOD_DEFAULT, MOOD_OPTIONS } from '../../domain/vocabulary';
 import { iso } from '../../utils/date';
 
@@ -53,6 +54,9 @@ export function TodoModal() {
   const [memoDraft, setMemoDraft] = useState<Record<string, string>>({});
   /** 生成中の行。legacy はボタンを disabled にして「作成中…」に差し替える（:3420） */
   const [generating, setGenerating] = useState<string | null>(null);
+  /** 行ごとのメモ入力欄。音声入力がカーソル位置を読むのに要る */
+  const memoRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const speech = useSpeechInput();
 
   if (panel !== 'todo') return null;
 
@@ -223,11 +227,31 @@ export function TodoModal() {
                       </select>
                       <div className="memowrap">
                         <input className="memo" placeholder="メモ（任意）例：昼食を半分残された／膝の痛みの訴えあり"
+                          ref={(el) => { memoRefs.current[r.visit.visitId] = el; }}
                           value={memoDraft[r.visit.visitId] ?? r.record?.memo ?? ''}
                           onChange={(e) => setMemoDraft((m) => ({ ...m, [r.visit.visitId]: e.target.value }))}
                           onBlur={() => { void saveMemo(r.visit.visitId, r.record?.memo ?? ''); }} />
-                        <button className="micmini" title="メモを音声入力"
-                          onClick={() => notify('音声入力は Phase 1b で実装します')}>🎤</button>
+                        {speech.supported && (
+                          <button className={`micmini${speech.listening === r.visit.visitId ? ' rec' : ''}`}
+                            title="メモを音声入力" aria-pressed={speech.listening === r.visit.visitId}
+                            onClick={() => {
+                              const id = r.visit.visitId;
+                              if (speech.listening === id) {
+                                /*
+                                 * 止めたところで保存する。legacy は音声で入れた値に change が飛ばず、
+                                 * 別の操作をするまで保存されなかった（結果として消えることがある）
+                                 */
+                                speech.stop();
+                                void saveMemo(id, r.record?.memo ?? '');
+                                return;
+                              }
+                              speech.start({
+                                id,
+                                el: memoRefs.current[id] ?? null,
+                                onChange: (v) => setMemoDraft((m) => ({ ...m, [id]: v })),
+                              });
+                            }}>🎤</button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -235,6 +259,15 @@ export function TodoModal() {
               );
             }))}
         </div>
+        {/* legacy/index.html:1382。行ごとではなくモーダルに1つ。.on が無いと表示されない */}
+        <div className={`mic-live${speech.listening !== null ? ' on' : ''}`} id="tLive" aria-live="polite">
+          <b>🎤 認識中…</b> {speech.heard
+            ? (speech.interim ? <span className="it">{speech.interim}</span> : '話しかけてください。')
+            : '話し終わると自動で入力されます。'}
+          <span className="tip">終了するときはもう一度ボタンを押してください。{speech.heard ? '' : '誤認識はそのまま手で修正できます。'}</span>
+        </div>
+        {/* legacy は非対応端末でボタンを黙って隠す（:3330）。理由を1行だけ出す（Q9） */}
+        {!speech.supported && (counts[2] ?? 0) > 0 && <div className="aihint">{SPEECH_UNSUPPORTED_HINT}</div>}
       </div>
     </Modal>
   );

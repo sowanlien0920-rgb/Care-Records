@@ -25,6 +25,7 @@ import { newRecordFor, recordOf } from '../../domain/visitStatus';
 import { clampToPlan, nowHM } from '../../domain/timeValidation';
 import { check, outOfPlan, NO_ISSUE_FINDING, type Finding } from '../../domain/compliance';
 import { generateNote } from '../../domain/noteBuilder';
+import { useSpeechInput, SPEECH_UNSUPPORTED_HINT } from '../../hooks/useSpeechInput';
 import { MOOD_DEFAULT, MOOD_OPTIONS, SERVICE_OPTIONS, TASK_OPTIONS } from '../../domain/vocabulary';
 import { toMin } from '../../utils/date';
 import type { ServiceKind, VisitRecord, VisitStatus } from '../../types/contract';
@@ -131,6 +132,9 @@ export function RecordModal() {
   const planRef = useRef<HTMLInputElement>(null);
   const actualRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const memoRef = useRef<HTMLInputElement>(null);
+  // 特記事項とメモで1つの .mic-live を共有する（legacy:3242-3243）
+  const speech = useSpeechInput();
 
   /*
    * 記録支援設定を取りに行く。ResidentModal.tsx:48-55 と同じ形にしてある。
@@ -541,9 +545,22 @@ export function RecordModal() {
             onClick={() => { void generate(); }}>
             <span className="sp"></span>✨ AIで文章作成
           </button>
-          <button className="micbtn" onClick={() => notify('音声入力は Phase 1b で実装します')}>
-            <span className="dot"></span>🎤 音声入力
-          </button>
+          {/* .dot は .micbtn.rec のときだけ出る（styles.css:306-310）。span を外すと録音表示が消える */}
+          {speech.supported ? (
+            <button className={`micbtn${speech.listening === 'note' ? ' rec' : ''}`} id="micNote"
+              aria-pressed={speech.listening === 'note'}
+              onClick={() => speech.start({
+                id: 'note',
+                el: noteRef.current,
+                // 音声で足したぶんも人が書いた本文として扱う
+                onChange: (v) => setEdit({ key: visit.visitId, draft: { ...draft, note: v, noteSource: 'manual' } }),
+              })}>
+              <span className="dot"></span>{speech.listening === 'note' ? '■ 停止' : '🎤 音声入力'}
+            </button>
+          ) : (
+            // legacy は黙って隠す（:3239）。理由が分からないと「壊れている」と見える（Q9）
+            <span className="aihint">{SPEECH_UNSUPPORTED_HINT}</span>
+          )}
           <button className="ghost" id="lintBtn" aria-controls="lintBox"
             onClick={() => setLint({ key: visit.visitId, list: check(collect(draft), resident?.carePlan) })}>📋 記載チェック</button>
           {/* legacy は undoStack があるときだけ表示する（:2734 / :2754-2759） */}
@@ -558,10 +575,13 @@ export function RecordModal() {
         </div>
         {/* .micmini は position:absolute。.memowrap（position:relative）の直下に置く */}
         <div className="memowrap">
-          <input className="memo" id="fMemo" placeholder="メモ（任意・箇条書き可）例：昼食を半分残された／左膝の痛みの訴えあり"
+          <input className="memo" id="fMemo" ref={memoRef} placeholder="メモ（任意・箇条書き可）例：昼食を半分残された／左膝の痛みの訴えあり"
             value={draft.memo} onChange={(e) => set('memo', e.target.value)} />
-          <button className="micmini" id="micMemo" title="メモを音声入力"
-            onClick={() => notify('音声入力は Phase 1b で実装します')}>🎤</button>
+          {speech.supported && (
+            <button className={`micmini${speech.listening === 'memo' ? ' rec' : ''}`} id="micMemo" title="メモを音声入力"
+              aria-pressed={speech.listening === 'memo'}
+              onClick={() => speech.start({ id: 'memo', el: memoRef.current, onChange: (v) => set('memo', v) })}>🎤</button>
+          )}
         </div>
         <div className="fld">
           <label htmlFor="fNote">特記事項</label>
@@ -572,6 +592,13 @@ export function RecordModal() {
               // 一括作成と未完了一覧にしか無く、手入力は常に未設定のままだった
               setEdit({ key: visit.visitId, draft: { ...draft, note: e.target.value, noteSource: 'manual' } });
             }} />
+        </div>
+        {/* legacy/index.html:968。.on が無いと表示されない（鉄則5） */}
+        <div className={`mic-live${speech.listening !== null ? ' on' : ''}`} id="micLive" aria-live="polite">
+          <b>🎤 認識中…</b> {speech.heard
+            ? (speech.interim ? <span className="it">{speech.interim}</span> : '話しかけてください。')
+            : '話し終わると自動で入力されます。'}
+          <span className="tip">終了するときはもう一度ボタンを押してください。{speech.heard ? '' : '誤認識はそのまま手で修正できます。'}</span>
         </div>
         {/*
           * legacy は .lint の直下に .lintitem を並べる（:2399-2404）。

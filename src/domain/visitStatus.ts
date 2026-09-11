@@ -102,6 +102,16 @@ export function newRecordFor(
     vitals: { temperature: '', bloodPressure: '', pulse: '' },
     note: '',
     noteSource: null,
+    /*
+     * 様子・メモは未記入で作る。
+     *
+     * legacy は新規予定の下書きにだけ MOODS[0] を入れていた（:1861）が、
+     * 既存の訪問は mood を持たないまま打刻される。帳票の「様子の傾向」は
+     * 値があるものだけを数える（:2130 / :3790）ため、打刻しただけの記録に
+     * 「いつもと変わりなし」を入れると、選んでいない様子が集計に載る。
+     */
+    mood: '',
+    memo: '',
     status: '未完',
     staffName: dispatch.staffName,
     carePlanVersion: resident?.carePlan.planVersion ?? null,

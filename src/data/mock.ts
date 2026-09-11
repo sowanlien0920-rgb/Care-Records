@@ -247,6 +247,9 @@ export function mockSeedRecords(): VisitRecord[] {
           // legacy の seed も特記事項を空にしている。記載チェックの対象になる
           note: '',
           noteSource: null,
+          // legacy の seed も mood / memo を持たない（:1687-1691）
+          mood: '',
+          memo: '',
           status: approved ? '完了' : '済',
           staffName: staff.name,
           carePlanVersion: 1,

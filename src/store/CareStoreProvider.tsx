@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from '../data/adapter';
-import { CareStoreContext, type Async, type CareStore, type PanelKind } from './context';
+import { CareStoreContext, type Async, type CareStore, type PanelKind, type RecordFieldPatch } from './context';
 import { localAdapter } from '../data/localAdapter';
 import { iso } from '../utils/date';
 import { newRecordFor, recordOf, type RecordContext } from '../domain/visitStatus';
@@ -319,6 +319,15 @@ export function CareStoreProvider({
     return saveRecord({ ...next, updatedAt: new Date().toISOString() });
   }, [findTarget, dispatch, visitRows, notify, saveRecord]);
 
+  /*
+   * 記録の一部だけを書き換える。打刻・承認と同じ mutateRecord を通すことで、
+   * 「記録が無ければ配信から作る」「updatedAt を打つ」を重複して書かずに済ませる。
+   */
+  const updateRecordFields = useCallback(async (
+    visitId: string,
+    patch: RecordFieldPatch,
+  ): Promise<boolean> => mutateRecord(visitId, (r) => ({ ...r, ...patch })), [mutateRecord]);
+
   const stampStartAt = useCallback(async (visitId: string) => {
     let message = '';
     const ok = await mutateRecord(visitId, (r) => {
@@ -449,7 +458,7 @@ export function CareStoreProvider({
     editingVisitId, openRecord, closeRecord,
     residentModalOpen, selectedResidentId, openResident, closeResident,
     staff, dispatch, records, badges, visitRows,
-    saveRecord, deleteRecord, getPrefs, savePrefs,
+    saveRecord, deleteRecord, updateRecordFields, getPrefs, savePrefs,
     incidents, saveIncident,
     panel, openPanel, closePanel,
     stampStartAt, stampEndAt, approveVisit, approveAllToday,
@@ -459,7 +468,7 @@ export function CareStoreProvider({
        date, session, sessionRestoring, signIn, signOut, staffId, setStaffId, filter,
        editingVisitId, openRecord, closeRecord, residentModalOpen, selectedResidentId, openResident,
        closeResident, staff, dispatch, records, badges, visitRows,
-       saveRecord, deleteRecord, getPrefs, savePrefs, incidents, saveIncident,
+       saveRecord, deleteRecord, updateRecordFields, getPrefs, savePrefs, incidents, saveIncident,
        panel, openPanel, closePanel, stampStartAt, stampEndAt, approveVisit,
        approveAllToday, retry, notification, notify
   ]);

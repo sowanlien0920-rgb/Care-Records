@@ -21,6 +21,16 @@ export type Async<T> =
   | { status: 'error'; message: string; kind: AdapterError['kind'] }
   | { status: 'ready'; data: T };
 
+/**
+ * 記録のうち、1項目だけを差し替えてよいフィールド。
+ *
+ * VisitRecord 全体を Partial で受けると、呼び出し側から visitId / schemaVersion /
+ * approvedBy まで書き換えられる。承認は「誰がいつ承認したか」を残す法定要件のある
+ * 操作なので、approveVisit を通さずに承認欄が書き換わる経路は作らない。
+ * 対象を増やすときは、その項目を承認とは独立に上書きしてよいかを確かめる。
+ */
+export type RecordFieldPatch = Partial<Pick<VisitRecord, 'note' | 'noteSource' | 'mood' | 'memo'>>;
+
 export interface CareStore {
   // ── 画面状態 ──────────────────────────────────────────
   date: string;
@@ -83,6 +93,14 @@ export interface CareStore {
   saveRecord: (record: VisitRecord) => Promise<boolean>;
   /** 実施記録を削除する。配信（予定）は消えない */
   deleteRecord: (visitId: string) => Promise<boolean>;
+  /**
+   * 記録の一部だけを書き換える。記録がまだ無ければ配信から作る。
+   * 未完了一覧の様子・メモのように、記録全体を組み立てずに1項目だけ保存する経路が使う。
+   *
+   * 戻り値は「保存できたか」。失敗の通知はここで出すので、
+   * 呼び出し側は結果を見てから成功を伝える。
+   */
+  updateRecordFields: (visitId: string, patch: RecordFieldPatch) => Promise<boolean>;
   /** 記録支援設定の読み書き。法定文書系は kpi-react が正なのでここには含めない */
   getPrefs: (residentId: string) => Promise<RecordPrefs>;
   savePrefs: (residentId: string, prefs: RecordPrefs) => Promise<boolean>;

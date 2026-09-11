@@ -32,7 +32,7 @@ review_required: yes
 | Phase | 内容 | 対象リポジトリ |
 |---|---|---|
 | **1** | **carerecords を React + Vite + TS 化（localStorage のまま、新データモデル + アダプタ境界）** | **carerecords** |
-| 2 | Firestore ルール作り直し + kpi-react 全経路の回帰確認 | kpi-react |
+| 2 | Firestore ルール作り直し + kpi-react 全経路の回帰確認 | kpi-react（実装済み・未デプロイ。`../kpi-react/docs/plans/2026-09-11-firestore-rules-phase2.md`） |
 | 3 | ヘルパーアカウント基盤（`users` 拡張、発行UI） | kpi-react |
 | 4 | 配信ドキュメント生成（`saveVisitRoute` に相乗り） | kpi-react |
 | 5 | carerecords のアダプタを Firestore に差し替え + PWA + Hosting | carerecords |

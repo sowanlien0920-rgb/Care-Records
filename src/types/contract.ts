@@ -30,8 +30,12 @@ import { z } from 'zod';
  *
  * 上げる: 必須項目の追加 / 項目の削除・改名 / 型の変更 / 意味の変更
  * 上げない: 省略可能な項目の追加
+ *
+ * ── 版の履歴 ────────────────────────────────────────────
+ * 1: Phase 1a。配信と実施記録の初版
+ * 2: Phase 1b。VisitRecord に mood / memo を追加し、noteSource に 'template' を足した
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * YYYY-MM-DD。形だけでなく実在する日付かも見る。
@@ -215,6 +219,11 @@ export const vitalsSchema = z.object({
  *
  * Phase 5 では facilities/{facilityId}/visitRecords/{visitId} に置く。
  * ヘルパーは自分の staffId のものだけ読み書きできる。
+ *
+ * ── mood / memo は carerecords が書き、kpi-react は読まない ──
+ * どちらも訪問先でヘルパーが観察・記入するもので、kpi-react 側に対応する
+ * 項目が無い。Phase 4 でこのファイルを kpi-react へコピーしても、
+ * kpi-react からは参照しない。逆向き（kpi-react が書く）は起こらない。
  */
 export const visitRecordSchema = z.object({
   schemaVersion: z.number().int(),
@@ -238,9 +247,28 @@ export const visitRecordSchema = z.object({
   note: z.string(),
   /**
    * 特記事項をどう書いたか。legacy の noteSrc（一覧のアイコンが ✨ か 📝 かを決める）。
-   * AI 生成を Phase 1b で入れるまでは 'manual' か null になる。
+   *
+   * 'template' は定型文生成（domain/noteBuilder.ts）が組み立てたもの。legacy は
+   * AI 失敗時のフォールバックを 'fb' として別に持っていたが、フォールバックも
+   * 定型文であることに変わりはないため 'template' に寄せる。
+   * 運営指導では「AI が書いたか / 定型文が組み立てたか / 人が書いたか」の区別を
+   * 記録から読めることが求められうるので、この3値は畳まない。
    */
-  noteSource: z.enum(['ai', 'manual']).nullable(),
+  noteSource: z.enum(['ai', 'template', 'manual']).nullable(),
+
+  /**
+   * ご本人の様子。legacy の v.mood（:1861）。選択肢は domain/vocabulary.ts の MOOD_OPTIONS。
+   * 未選択は空文字で表す（note / vitals と同じ「値がないは空文字」の扱い）。
+   *
+   * 選択肢を enum で縛らないのは、事業所ごとに語を足しうるため。
+   * 値域の正は MOOD_OPTIONS 側に置き、契約は文字列として受ける。
+   */
+  mood: z.string(),
+  /**
+   * ヘルパーのメモ。legacy の v.memo（:1861）。特記事項そのものではなく、
+   * 定型文生成（domain/noteBuilder.ts）の入力になる下書きにあたる。
+   */
+  memo: z.string(),
   status: visitStatusSchema,
 
   /**

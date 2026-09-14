@@ -1,6 +1,6 @@
 ---
 request: carerecords Phase 5a（Firebase Auth によるログインと firestoreAdapter への差し替え）を実装する
-status: implementing
+status: done
 created: 2026-09-14
 review_required: yes
 ---
@@ -284,6 +284,45 @@ carerecords の `localStorage` にあるのは開発中に作った記録だけ�
 - [x] **ステップ4** — 実施記録の読み書き（2026-09-14）
 - [x] **ステップ5** — 横断クエリ。U3 を決めた（2026-09-14）。**複合インデックスは未作成**
 - [x] **ステップ6** — 残る3経路とルール変更（2026-09-14）。**ルールは未デプロイ**
+- [x] **ステップ7** — セキュリティ監査の指摘への対応（2026-09-14。計画の追加分）
+
+### ステップ7 の内容（監査対応）
+
+`docs/security/2026-09-14-audit.md` の Critical・High と、
+同時に行ったコードレビューの要修正に対応した。**kpi-react 側は U1 の承認範囲内**。
+
+#### 振る舞いの変更
+
+| # | 変更前 | 変更後 | 影響 |
+|---|---|---|---|
+| 1 | `VITE_BACKEND` 未設定なら `local`（認証なし）。本番も同じ | **本番ビルドは常に `firestore`**。`local` は dev 限定 | 本番で `local` を選べなくなる。`vite.config.ts` がビルド時に弾く |
+| 2 | `localAdapter` を静的 import。`mock.ts`（利用者の氏名・年齢・要介護度・世帯状況）が全ビルドに載る | `import.meta.env.DEV` で括った動的 import | **本番バンドルからモックが消えた**（実測済み）。dev の `local` 起動時に一瞬だけ待ちが入る |
+| 3 | `listStaff()` が `facilities/{fid}/staffs` を読む | `users` を読む。ヘルパーは自分の1件のみ | 施設アカウント（管理者）は `role in [supervisor, helper]` の絞り込みに入らないため、職員切替に自分以外の管理者が並ばなくなる |
+| 4 | 記録の保存・削除・承認・打刻で `appendAuditLog` が呼ばれない（履歴ゼロ） | 5経路すべてから呼ぶ。legacy の `pushLog`（`index.html:2968`）と同じ粒度 | 履歴が残るようになった。書けなかったときは通知する（保存自体は巻き戻さない） |
+| 5 | パスワード変更は `notify('Phase 5 で実装します')` のスタブ | `PasswordModal`。初期パスワード `000000` でログインすると強制モードで開く | 変更するまで閉じられない（legacy の `mustChange`、`index.html:4201`） |
+| 6 | 復元前に `LoginForm` が出て、操作できてしまう | `authResolved` が立つまで未ログインと判定しない。ボタンも押せない | 再読込時の不要な再サインイン（`auth/too-many-requests` の誘発）が止まる |
+| 7 | セッション復元の失敗を握り潰してログイン画面に戻す | `sessionError` としてログイン画面に出す。職員一覧のエラーも出す | `users/{uid}` 未作成・形式違反・権限拒否が職員に伝わる |
+| 8 | `failed-precondition` / `unauthenticated` が `unknown` に落ちる | それぞれ `contract` / `forbidden` に分ける | インデックス不足と期限切れの切り分けができる |
+
+#### kpi-react 側（U1 の承認範囲）
+
+| ファイル | 変更 |
+|---|---|
+| `firestore.rules` | `facilities/{fid}/staffs` の `allow read`（サ責・ヘルパー）を**取り下げた**。代わりに `users` の `read` をサ責へ広げた（**read のみ。発行・変更・削除は広げていない**） |
+| `firestore.indexes.json` | `dispatches` と `visitRecords` に `staffId` + `date` の複合インデックスを追加。`getBadgeCounts` / `listVisitRows` が本番で `failed-precondition` になるのを防ぐ |
+| `tests/firestore-rules.test.mjs` | 上の2点に対する否定テストを追加。`サ責は発行画面の一覧を取れない` は「一覧は取れるが発行はできない」に書き換えた |
+
+**検証: エミュレータで 104件すべて pass（2026-09-14）。**
+
+#### 未了（別の判断が要る）
+
+- ~~**ルールとインデックスのデプロイ。**~~ **2026-09-14 18:39 JST に解消済み**（下記
+  「ルール変更後の再確認」）。本番のルールセットは kpi-react の作業ツリーと**バイト単位で一致**し、
+  `staffs` の read が開いていた状態は塞がった。複合インデックスも本番に反映されている
+- **セキュリティヘッダ**（CSP / X-Frame-Options 等）と **App Check**。監査の Medium
+- **承認済み記録の上書き**、**`request.time` によるサーバ時刻の強制**、
+  **`hasOnly` / `hasAll` による書き込み検証**。いずれも Rules の設計変更を伴うため別立て
+
 
 ### ステップ1 の内容
 
@@ -415,6 +454,25 @@ kpi-react の `toEmail(facilityId, seq)` は**施設 ID**、`toLoginId(facilityC
 （ビルド後のサイズがステップ1 の前後で 444.14 kB のまま変わらない）。
 **実際に Firebase へ繋がることは、この時点では確認できていない。** ステップ2 以降で確認する。
 
+**（ステップ7 で気づいた点）**
+
+**8. `devTools.ts` がどこからも import されていない。** `localAdapter` を参照しているため、
+もし UI から使われたらモックが本番に戻る。今回は import 元が無いことを確認して据え置いた。
+
+**9. パスワード変更の検査順を legacy から変えた。** legacy は「現在のパスワード」を最初に見る
+（`index.html:4263`）が、あちらは同期のハッシュ比較だった。Firebase では通信になるため、
+手元で分かる3つ（長さ・一致・初期値）を先に見る。**エラー文言は変えていない。**
+
+**10. 二重送信の防止を足した。** legacy の `pwSave` には無い（`index.html:4260`）。
+`localStorage` への同期書き込みと Auth への通信では意味が違うため、鉄則6 の対象外と判断した。
+
+**11. 変更履歴に利用者の氏名を入れなかった。** legacy は `pushLog` の detail に氏名を
+埋め込んでいた（`index.html:1982`）が、職員名・利用者名を改名しても履歴は書き換わらず、
+古い氏名が残り続ける。参照は `targetId`（visitId）と `residentId` に寄せた。
+
+**12. 承認済み記録の上書きがルールで塞がっていない。** 承認権限者は `approvedBy` を自分に
+付け替えて内容を書き換えられる（監査の Medium）。版として残す設計が要るため、今回は触っていない。
+
 ## 6. Verification
 
 **実装者による確認であり、`verifying-changes` の検証ではない。**
@@ -465,6 +523,58 @@ headless ブラウザで実際に操作した結果のみを書く。
 - 記録の保存・削除を実際に行う操作（`saveRecord` / `deleteRecord` はコードのみ）
 - 記録設定（`getPrefs` / `savePrefs`）と変更履歴の読み書き
 
+### ルール変更後の再確認（2026-09-14 18:40 JST）
+
+ステップ7 のあと、kpi-react 側のルールが3回変わった
+（`db3b617` carePlanSets / `89bab5c` 介護日誌連携・`staffs` read の取り下げ / `114dc2b` インデックス）。
+**変更後の本番ルールで carerecords が動くかを確認した。**
+
+| 確認 | 方法 | 結果 |
+|---|---|---|
+| 型チェック | `npm run typecheck` | 通る |
+| Lint | `npm run lint` | 通る |
+| 本番ビルド | `VITE_USE_EMULATOR=0 VITE_BACKEND=firestore npx vite build` | 通る（997.15 kB / gzip 292.17 kB） |
+| 本番ビルドの検査 | `npm run build`（`.env.local` のまま） | **意図どおり失敗**。`VITE_USE_EMULATOR=1` を弾く。dev の設定のままでは本番ビルドが作れない |
+| 本番のルール | Rules API でデプロイ済みルールセットを取得し `diff` | **kpi-react の作業ツリーと完全一致**（21,850 バイト、更新 2026-09-14 18:39 JST） |
+| 本番のインデックス | `firebase firestore:indexes` | `dispatches` / `visitRecords`（`staffId`+`date`）、`users`（`facilityId`+`role`）、`auditLogs` が**反映済み** |
+| ヘルパー（MOCK002） | エミュレータで実操作 | 配信6件・未完了11。未承認一覧と帳票のボタンは出ない。コンソールエラー0 |
+| サ責（MOCK001） | 同上 | 配信12件・未完了23・未承認0。未承認一覧と帳票が出る。**職員切替に4名**（`staffs` を取り下げ `users` から読む経路が新ルールで通っている）。コンソールエラー0 |
+| ログアウト | 同上 | ログイン画面に戻る |
+
+**`staffs` の read を取り下げても職員切替が壊れていないことを、実際の画面で確認した。**
+ステップ7 で入れ替えた `users` 読みは、本番と同じルールで通っている。
+
+#### この確認で見つかった不具合（修正済み）
+
+**未ログインのログイン画面に、誰も操作していないのに
+「ログインの有効期限が切れました。もう一度ログインしてください。」と「再試行」が出ていた。**
+
+職員一覧の取得（`CareStoreProvider.tsx` の `listStaff` 効果）がログイン状態に関わらず走り、
+`requireProfile()` が `auth.currentUser === null` で投げる文言がそのまま
+`.lg-err on` に出ていた。ステップ7 の変更点7（職員一覧のエラーも出す）の副作用である。
+
+初回の職員には身に覚えのないエラーになり、「再試行」を押しても同じものが出続ける。
+未認証のまま `users` を読みにいく無駄な通信でもあった。
+
+サインイン中だけ職員一覧を取りにいくよう直した（`signedIn`）。
+未ログインのあいだは空の一覧で確定させる。`loading` のままにすると
+`sessionRestoring` が下りず、ログイン画面自体が出なくなるため。
+修正後、初回表示のエラーが消え、ログイン・職員切替・ログアウトが従来どおり動くことを確認した。
+
+### なお未確認のまま（本番でしか確かめられない）
+
+ルールとインデックスは本番で確認できたが、次の3つは残っている。
+
+- **App Check。** Enforce なら全リクエストが弾かれる
+- **実データの形。** seed はモックで、Phase 4 が実データで生成した配信では試していない
+- **スマホ実機**
+
+本番の Auth へは触れていない（`auth/too-many-requests` の再発を避けるため）。
+
 ## 7. Result
 
-未完了。
+**Phase 5a は実装・検証とも完了した**（2026-09-14）。
+ルールとインデックスは本番に出ており、エミュレータでの動作確認も変更後のルールで取り直した。
+
+残るのは本番接続時にしか確かめられない3点（App Check・実データ・実機）と、
+Phase 5b（PWA 化とオフライン永続化。U4-b）である。

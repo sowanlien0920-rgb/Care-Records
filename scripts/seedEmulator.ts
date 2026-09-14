@@ -32,9 +32,9 @@ import {
   mockDispatchDates,
 } from '../src/data/mock';
 import { toRuleRole } from '../src/types/local';
+// 初期パスワードは kpi-react との契約。3か所目の写しを作らない
+import { INITIAL_PASSWORD } from '../src/data/loginId';
 
-/** kpi-react の AccountPage.jsx と同じ値。ずらすとログインできない */
-const INITIAL_PASSWORD = '000000';
 const FACILITY_CODE = 'MOCK';
 const EMULATOR_FIRESTORE = '127.0.0.1:8085';
 const EMULATOR_AUTH = '127.0.0.1:9099';

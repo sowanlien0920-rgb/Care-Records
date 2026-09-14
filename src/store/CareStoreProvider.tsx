@@ -16,7 +16,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from '../data/adapter';
 import { CareStoreContext, type Async, type CareStore, type PanelKind, type RecordFieldPatch } from './context';
-import { localAdapter } from '../data/localAdapter';
 import { clearProfileCache, firestoreAdapter } from '../data/firestoreAdapter';
 import { auth, BACKEND } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -56,20 +55,65 @@ function resolve<T>(keyed: Keyed<T> | null, key: string): Async<T> {
 }
 
 /**
- * 既定のアダプタ。
+ * 既定のアダプタを決める。
  *
- * Phase 5a の移行中は `VITE_BACKEND` で切り替える。`localStorage` 側を消すと、
- * Firestore 側で詰まったときに動かせるものが無くなるため、両方を残しておく。
+ * Firestore 実装だけを静的に持ち、`localStorage` 実装は **開発時だけ**
+ * 動的に読み込む。`localAdapter` は `src/data/mock.ts`（利用者の氏名・ふりがな・
+ * 年齢・要介護度・世帯状況を持つ）を import しているため、静的 import のままだと
+ * `VITE_BACKEND` の値に関わらずモックが本番バンドルに載り続けていた
+ * （`docs/security/2026-09-14-audit.md` の Critical）。
+ *
+ * `import.meta.env.DEV` は本番ビルドで `false` に置換され、この分岐ごと消える。
+ * 動的 import は別チャンクとしても出力されないため、モックは配信されない。
+ * **この `if` を外すと、モックが再び本番に出るようになる。**
+ *
+ * 本番の `BACKEND` は常に `firestore`（`src/firebase.ts`）なので、
+ * 本番では同期的に決まり、待ちは発生しない。
  */
-const defaultAdapter: DataAdapter =
-  BACKEND === 'firestore' ? firestoreAdapter : localAdapter;
+function useResolvedAdapter(override: DataAdapter | undefined): DataAdapter | null {
+  const [loaded, setLoaded] = useState<DataAdapter | null>(null);
 
+  useEffect(() => {
+    if (override !== undefined || BACKEND === 'firestore') return;
+    let alive = true;
+    if (import.meta.env.DEV) {
+      void import('../data/localAdapter').then((m) => {
+        if (alive) setLoaded(m.localAdapter);
+      });
+    }
+    return () => { alive = false; };
+  }, [override]);
+
+  if (override !== undefined) return override;
+  if (BACKEND === 'firestore') return firestoreAdapter;
+  return loaded;
+}
+
+/**
+ * アダプタが決まるまで中身を組み立てない。
+ *
+ * 中で null 検査を配り歩くと、取得の効果すべてに「まだ無い」経路が増える。
+ * 決まってから下を作る方が、読む側にも渡す側にも分岐が残らない。
+ */
 export function CareStoreProvider({
   children,
-  adapter = defaultAdapter,
+  adapter,
 }: {
   children: ReactNode;
   adapter?: DataAdapter;
+}) {
+  const resolved = useResolvedAdapter(adapter);
+  // 開発時に localAdapter を読み込む一瞬だけ通る。本番では同期的に決まる
+  if (resolved === null) return null;
+  return <CareStore adapter={resolved}>{children}</CareStore>;
+}
+
+function CareStore({
+  children,
+  adapter,
+}: {
+  children: ReactNode;
+  adapter: DataAdapter;
 }) {
   const [date, setDate] = useState(() => iso(new Date()));
   /**
@@ -98,6 +142,41 @@ export function CareStoreProvider({
    * 購読しないと、ログインしても画面がログインフォームのまま変わらない。
    */
   const [authToken, setAuthToken] = useState(0);
+  /**
+   * Firebase Auth の復元が終わったか。
+   *
+   * `auth.currentUser` はマウント直後には必ず `null` になる。永続化の読み出しが
+   * まだ終わっていないためで、未ログインを意味しない。ここを見ずに
+   * `getSessionStaffId()` の結果を採用すると `sessionSlot` が
+   * 「読んだが未ログイン」で確定し、**ログイン済みの職員が再読込するたびに
+   * 操作可能なログイン画面が出る**（`docs/security/2026-09-14-audit.md`）。
+   * そこで打ち込まれた入力は不要な再サインインになり、
+   * `auth/too-many-requests` による締め出しを誘発する。
+   */
+  const [authResolved, setAuthResolved] = useState(BACKEND !== 'firestore');
+  /**
+   * Firebase Auth にサインイン中か。
+   *
+   * 未ログインのまま `listStaff()` を呼ぶと `users` を読む権限が無く、
+   * その失敗が**誰も操作していないログイン画面に
+   * 「ログインの有効期限が切れました」として出る**。初回の利用者には
+   * 身に覚えのないエラーになり、再試行を押しても同じものが出続ける。
+   * `local` 実装には認証が無いので、こちらは常にサインイン中として扱う。
+   */
+  const [signedIn, setSignedIn] = useState(BACKEND !== 'firestore');
+  /** 直前の uid。初回発火を「職員の交代」と取り違えないために持つ */
+  const lastUid = useRef<string | null>(null);
+  /**
+   * セッションを復元できなかった理由。
+   *
+   * `users/{uid}` 未作成・形式違反・ルールで拒否は、いずれも
+   * `AdapterError.userMessage` に事業所へ伝えるべき文言が入っている。
+   * 握り潰すと職員には「パスワードを間違えた」ようにしか見えず、
+   * ログアウトボタンは `Shell` の中なので自力で抜ける手段も無くなる。
+   */
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  /** 初期パスワードのままログインした。`LoginForm` が立て、`PasswordModal` が降ろす */
+  const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
 
   const [staffKeyed, setStaffKeyed] = useState<Keyed<StaffAccount[]> | null>(null);
   const [dispatchKeyed, setDispatchKeyed] = useState<Keyed<Dispatch | null> | null>(null);
@@ -134,7 +213,12 @@ export function CareStoreProvider({
    * 未完了一覧の様子・メモの保存や、一括作成の進捗が消えるのはこれが原因だった。
    */
   const staffKey = `${staffToken}`;
-  const staff = useMemo(() => resolve(staffKeyed, staffKey), [staffKeyed, staffKey]);
+  // 未ログインのあいだは取りにいかないので、前の職員の一覧を残さず空で確定させる。
+  // loading のままにすると sessionRestoring が下りず、ログイン画面が出ない
+  const staff = useMemo<Async<StaffAccount[]>>(
+    () => (signedIn ? resolve(staffKeyed, staffKey) : { status: 'ready', data: [] }),
+    [staffKeyed, staffKey, signedIn],
+  );
 
   /*
    * ログイン中の職員は「保存した ID」と「職員一覧」から導く。
@@ -147,8 +231,12 @@ export function CareStoreProvider({
     return staff.data.find((s) => s.staffId === id) ?? null;
   }, [sessionSlot, staff]);
 
-  /** 保存領域の読み出しと職員一覧の照合が終わるまで、ログイン状態は判定できない */
-  const sessionRestoring = sessionSlot === null
+  /**
+   * 保存領域の読み出しと職員一覧の照合が終わるまで、ログイン状態は判定できない。
+   * Firestore では Auth の復元（`authResolved`）がその手前に1つ増える。
+   */
+  const sessionRestoring = !authResolved
+    || sessionSlot === null
     || (sessionSlot.staffId !== null && staff.status === 'loading');
 
   const staffId = pickedStaffId ?? session?.staffId ?? null;
@@ -175,12 +263,14 @@ export function CareStoreProvider({
 
   // 職員一覧
   useEffect(() => {
+    // 未ログインでは読む先が無い。読みにいくと失敗がログイン画面に出る
+    if (!signedIn) return;
     let alive = true;
     adapter.listStaff()
       .then((data) => { if (alive) setStaffKeyed({ key: staffKey, result: { status: 'ready', data } }); })
       .catch((e) => { if (alive) setStaffKeyed({ key: staffKey, result: toAsyncError(e) }); });
     return () => { alive = false; };
-  }, [adapter, staffKey]);
+  }, [adapter, staffKey, signedIn]);
 
   /*
    * Firebase Auth のログイン状態を購読する。
@@ -191,8 +281,19 @@ export function CareStoreProvider({
    */
   useEffect(() => {
     if (BACKEND !== 'firestore') return;
-    return onAuthStateChanged(auth, () => {
+    return onAuthStateChanged(auth, (user) => {
+      const uid = user?.uid ?? null;
+      // 復元が済むまでは未ログインと判定させない
+      setAuthResolved(true);
+      setSignedIn(uid !== null);
+      // 購読開始時にも必ず1回発火する。uid が変わっていないのにトークンを
+      // 進めると、走り出したばかりの取得を全部やり直させることになる
+      if (lastUid.current === uid) return;
+      lastUid.current = uid;
       clearProfileCache();
+      setSessionError(null);
+      // 職員が変われば、前の職員に出していた強制変更は持ち越さない
+      setPasswordChangeRequired(false);
       setAuthToken((n) => n + 1);
       setStaffToken((n) => n + 1);
       setReloadToken((n) => n + 1);
@@ -201,13 +302,24 @@ export function CareStoreProvider({
 
   // 保存済みの職員選択を復元する。Firestore では Firebase Auth の永続化が担う
   useEffect(() => {
+    // Auth の復元が済むまでは「未ログイン」と判定しない
+    if (!authResolved) return;
     let alive = true;
     adapter.getSessionStaffId()
-      .then((id) => { if (alive) setSessionSlot({ staffId: id }); })
-      // 復元できないことはログインを止める理由にならない。ログインからやり直す
-      .catch(() => { if (alive) setSessionSlot({ staffId: null }); });
+      .then((id) => {
+        if (!alive) return;
+        setSessionError(null);
+        setSessionSlot({ staffId: id });
+      })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        // 復元できないことはログイン画面に戻す理由になるが、黙って戻さない。
+        // 何が起きたかを見せないと、職員は同じ操作を繰り返すことになる
+        setSessionError(e instanceof AdapterError ? e.userMessage : '職員の情報を読み込めませんでした。');
+        setSessionSlot({ staffId: null });
+      });
     return () => { alive = false; };
-  }, [adapter, authToken]);
+  }, [adapter, authToken, authResolved]);
 
   // 配信
   useEffect(() => {
@@ -300,20 +412,73 @@ export function CareStoreProvider({
     [session, badgesKeyed, badgeKey],
   );
 
-  const saveRecord = useCallback(async (record: VisitRecord): Promise<boolean> => {
+  /**
+   * 変更履歴を1件残す。legacy の `pushLog()`（`index.html:2968`）にあたる。
+   *
+   * 履歴が残せなくても、記録そのものの保存は巻き戻さない。法定文書の本体は
+   * 実施記録の方であり、履歴が書けないことを理由に訪問先での記録を失わせる方が重い。
+   * ただし**黙って落とさない**。残らなかったことに気づけないなら、
+   * 履歴があるという前提そのものが崩れる。
+   *
+   * `message` に利用者の氏名を入れない。legacy は氏名を埋め込んでいたが
+   * （`index.html:1982`）、改名しても履歴は書き換わらず古い氏名が残り続ける。
+   * 参照は `targetId`（visitId）と `residentId` に寄せる。
+   */
+  const logChange = useCallback(async (
+    category: string,
+    targetId: string | null,
+    message: string,
+  ): Promise<void> => {
+    try {
+      await adapter.appendAuditLog({
+        // 端末をまたいでも衝突しない程度の長さにする
+        logId: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+        at: new Date().toISOString(),
+        staffId: session?.staffId ?? null,
+        category,
+        targetId,
+        message,
+      });
+    } catch {
+      notify('操作は保存しましたが、変更履歴を残せませんでした。事業所にご連絡ください。');
+    }
+  }, [adapter, session, notify]);
+
+  /**
+   * その訪問の記録が既にあるか。履歴の `新規` と `更新` を分けるために見る。
+   * 表示中の日付と、日付・職員をまたぐ一覧の両方を見る（`findTarget` と同じ理由）。
+   */
+  const recordExists = useCallback((visitId: string): boolean => {
+    if (records.status === 'ready' && records.data.records.some((r) => r.visitId === visitId)) return true;
+    return visitRows.status === 'ready'
+      && visitRows.data.some((r) => r.visit.visitId === visitId && r.record !== undefined);
+  }, [records, visitRows]);
+
+  const saveRecord = useCallback(async (
+    record: VisitRecord,
+    /** 履歴の分類。省略すると記録の有無から `新規` / `更新` を決める */
+    audit?: { category: string; message: string },
+  ): Promise<boolean> => {
+    const existed = recordExists(record.visitId);
     try {
       await adapter.saveRecord(record);
     } catch (e) {
       notify(e instanceof AdapterError ? e.userMessage : '保存に失敗しました。');
       return false;
     }
+    void logChange(
+      audit?.category ?? (existed ? '更新' : '新規'),
+      record.visitId,
+      audit?.message
+        ?? `${record.serviceName} ${record.plannedStart}〜${record.plannedEnd}（利用者 ${record.residentId}）`,
+    );
     // 保存した記録のスコープと、いま画面が見ているスコープは一致しない場合がある。
     // サービス提供責任者が未承認一覧から他職員の記録を承認する場合など。
     // 保存側のキーでキャッシュを書くと、解決に使うキーと食い違って loading から
     // 抜けられなくなるため、再取得は必ず「いま表示しているスコープ」に対して行う。
     setReloadToken((n) => n + 1);
     return true;
-  }, [adapter, notify]);
+  }, [adapter, notify, logChange, recordExists]);
 
   /**
    * visitId から、打刻・承認の対象を解決する。
@@ -357,6 +522,8 @@ export function CareStoreProvider({
   const mutateRecord = useCallback(async (
     visitId: string,
     change: (record: VisitRecord) => VisitRecord | { error: string },
+    /** 履歴の分類。打刻・承認は `更新` に丸めず、legacy と同じ粒度で残す */
+    audit?: { category: string; message: string },
   ): Promise<boolean> => {
     const target = findTarget(visitId);
     if (target === null) {
@@ -369,7 +536,7 @@ export function CareStoreProvider({
     const next = change(current);
     if ('error' in next) { notify(next.error); return false; }
 
-    return saveRecord({ ...next, updatedAt: new Date().toISOString() });
+    return saveRecord({ ...next, updatedAt: new Date().toISOString() }, audit);
   }, [findTarget, dispatch, visitRows, notify, saveRecord]);
 
   /*
@@ -388,7 +555,7 @@ export function CareStoreProvider({
       if (!res.ok) return { error: res.message };
       message = res.message;
       return { ...r, actualStart: res.time };
-    });
+    }, { category: '更新', message: '開始時刻を記録' });
     // 保存できていない打刻を「記録しました」と伝えない
     if (ok) notify(message);
   }, [mutateRecord, notify]);
@@ -401,7 +568,7 @@ export function CareStoreProvider({
       message = res.message;
       // legacy/index.html:3144。終了の打刻で状態が「済」になる
       return { ...r, actualEnd: res.time, status: '済' as const };
-    });
+    }, { category: '更新', message: '終了時刻を記録（済）' });
     if (ok) notify(message);
   }, [mutateRecord, notify]);
 
@@ -416,7 +583,7 @@ export function CareStoreProvider({
       approvedBy: me.staffId,
       approvedByName: me.name,
       approvedAt: new Date().toISOString(),
-    }));
+    }), { category: '承認', message: `承認者：${me.name}` });
     // 承認は誰がいつ承認したかを残す法定要件のある操作になる。
     // 保存できていないのに「承認しました」と伝えると、承認漏れに気づけない
     if (ok) notify('承認しました（完了）');
@@ -430,9 +597,11 @@ export function CareStoreProvider({
       notify(e instanceof AdapterError ? e.userMessage : '削除に失敗しました。');
       return false;
     }
+    // 削除は記録そのものが消えるため、履歴が唯一の痕跡になる
+    void logChange('削除', visitId, '実施記録を削除');
     setReloadToken((n) => n + 1);
     return true;
-  }, [adapter, notify]);
+  }, [adapter, notify, logChange]);
 
   const getPrefs = useCallback((residentId: string) => adapter.getPrefs(residentId), [adapter]);
 
@@ -476,7 +645,10 @@ export function CareStoreProvider({
     const ids = new Set(plan?.visits.map((v) => v.visitId) ?? []);
     // legacy/index.html:1824。対象はその日その職員の「済」。絞り込みは無視する
     const targets = list.filter((r) => ids.has(r.visitId) && r.status === '済');
-    if (targets.length === 0) { notify('承認できる「済」の記録がありません'); return; }
+    if (targets.length === 0) {
+      notify('承認できる「済」の記録がありません');
+      return;
+    }
     if (!window.confirm(`「済」${targets.length}件を承認して完了にします。よろしいですか？`)) return;
 
     // legacy は全件で同じタイムスタンプを使う（:1828）
@@ -489,6 +661,7 @@ export function CareStoreProvider({
           ...r, status: '完了', approvedBy: me.staffId, approvedByName: me.name, approvedAt: at,
           updatedAt: at,
         });
+        void logChange('承認', r.visitId, `一括承認／承認者：${me.name}`);
         done += 1;
       } catch (e) {
         // 途中で失敗しても、そこまでに承認できた分は残す。
@@ -501,11 +674,12 @@ export function CareStoreProvider({
     notify(failure === null
       ? `${done}件を承認しました（承認者：${me.name}）`
       : `${done}件を承認しましたが、残り${targets.length - done}件は承認できませんでした。${failure}`);
-  }, [adapter, session, records, dispatch, notify]);
+  }, [adapter, session, records, dispatch, notify, logChange]);
 
   const value = useMemo<CareStore>(() => ({
     date, setDate,
-    session, sessionRestoring, signIn, signOut,
+    session, sessionRestoring, sessionError, signIn, signOut,
+    passwordChangeRequired, setPasswordChangeRequired,
     staffId, setStaffId,
     filter, setFilter,
     editingVisitId, openRecord, closeRecord,
@@ -518,7 +692,8 @@ export function CareStoreProvider({
     retry,
     notification, notify,
   }), [
-       date, session, sessionRestoring, signIn, signOut, staffId, setStaffId, filter,
+       date, session, sessionRestoring, sessionError, signIn, signOut,
+       passwordChangeRequired, staffId, setStaffId, filter,
        editingVisitId, openRecord, closeRecord, residentModalOpen, selectedResidentId, openResident,
        closeResident, staff, dispatch, records, badges, visitRows,
        saveRecord, deleteRecord, updateRecordFields, getPrefs, savePrefs, incidents, saveIncident,

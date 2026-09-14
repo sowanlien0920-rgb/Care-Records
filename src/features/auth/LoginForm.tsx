@@ -23,7 +23,8 @@ import { FirebaseError } from 'firebase/app';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useEffect, useRef, useState } from 'react';
 import { auth } from '../../firebase';
-import { loginIdToEmail } from '../../data/loginId';
+import { INITIAL_PASSWORD, loginIdToEmail } from '../../data/loginId';
+import { useCareStore } from '../../store/useCareStore';
 
 /*
  * 曜日。TodoModal / ReportModal / PendingModal も同じものを各自で持っている。
@@ -77,6 +78,15 @@ function messageOf(code: string): string {
 }
 
 export function LoginForm() {
+  /*
+   * ログイン後に起きた失敗も、この画面が出す。
+   * `users/{uid}` が未作成・形式違反・ルールで拒否のときは `signInWithEmailAndPassword`
+   * 自体は成功するため、ここで出さないと職員には「パスワードを間違えた」としか
+   * 見えない。ログアウトボタンは Shell の中にあり到達できないので、
+   * 黙って戻すと自力で抜ける手段が無くなる（docs/security/2026-09-14-audit.md）。
+   */
+  const { sessionRestoring, sessionError, staff, retry, setPasswordChangeRequired } = useCareStore();
+
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
   const [reveal, setReveal] = useState(false);
@@ -130,6 +140,13 @@ export function LoginForm() {
     setError('');
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      /*
+       * 初期パスワードのまま入れてしまった場合は、その場で変更を求める。
+       * 発行時の初期値は全アカウント共通で（kpi-react の `AccountPage.jsx:23`）、
+       * ログイン ID は施設コード+3桁と形が既知なので、変えないまま使わせない。
+       * legacy の `mustChange`（`index.html:4201`）にあたる導線になる。
+       */
+      if (password === INITIAL_PASSWORD) setPasswordChangeRequired(true);
       // 成功後の画面遷移は onAuthStateChanged 側が行う。ここでは何もしない。
       // パスワードもクリアしない（このコンポーネントごと外れるため）
     } catch (err: unknown) {
@@ -234,19 +251,32 @@ export function LoginForm() {
             </button>
           </div>
 
+          {/* 復元の失敗。入力の誤りとは原因も対処も違うので、文言をそのまま出す */}
+          {error === '' && sessionError !== null && (
+            <div className="lg-err on" role="alert">{sessionError}</div>
+          )}
+          {error === '' && sessionError === null && staff.status === 'error' && (
+            <>
+              <div className="lg-err on" role="alert">{staff.message}</div>
+              <button className="lg-btn" type="button" onClick={retry}>再試行</button>
+            </>
+          )}
+
           <div className={error ? 'lg-err on' : 'lg-err'} id="lgErr" ref={errorRef} role="alert" aria-live="assertive">
             <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.2" stroke="currentColor" strokeWidth="1.6"/><path d="M10 6v4.6M10 13.6v.1" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"/></svg>
             <span id="lgErrTxt">{error}</span>
           </div>
 
           <button
-            className={busy ? 'lg-btn busy' : 'lg-btn'}
+            className={busy || sessionRestoring ? 'lg-btn busy' : 'lg-btn'}
             id="lgBtn"
             type="button"
-            disabled={busy}
+            // 復元中に押させない。既にログイン済みの職員が再読込しただけのとき、
+            // ここから不要な再サインインが飛ぶと auth/too-many-requests を招く
+            disabled={busy || sessionRestoring}
             onClick={onSubmitClick}
           >
-            <span className="sp"></span>ログイン
+            <span className="sp"></span>{sessionRestoring ? '確認しています…' : 'ログイン'}
           </button>
           <div className="lg-note" id="lgNote">パスワードが分からない場合は、管理者にリセットを依頼してください。</div>
           <div className="lg-foot">事業所内でのご利用を前提としたシステムです</div>

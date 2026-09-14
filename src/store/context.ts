@@ -8,7 +8,7 @@ import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
 import type { Incident, RecordPrefs, StaffAccount } from '../types/local';
 
 /** ツールバーから開く画面の種類 */
-export type PanelKind = 'todo' | 'pending' | 'report' | 'timeline' | 'incident';
+export type PanelKind = 'todo' | 'pending' | 'report' | 'timeline' | 'incident' | 'password';
 
 /**
  * 非同期の4状態を型で表す。
@@ -46,6 +46,22 @@ export interface CareStore {
    * true の間は「未ログイン」と判定しない（職員選択が一瞬見えるのを防ぐ）。
    */
   sessionRestoring: boolean;
+  /**
+   * セッションを復元できなかった理由。復元できたときは null。
+   *
+   * `users/{uid}` 未作成・形式違反・ルールで拒否は、いずれも職員本人には
+   * 直せない。ログイン画面に出さないと「パスワードを間違えた」としか見えず、
+   * 同じ操作を繰り返すことになる（`docs/security/2026-09-14-audit.md`）。
+   */
+  sessionError: string | null;
+  /**
+   * 初期パスワードのままログインしたか。true の間は `PasswordModal` が
+   * 強制モードで開き、変更するまで閉じられない（legacy の `mustChange`、
+   * `index.html:4201`）。発行時の初期値は全アカウント共通のため、
+   * 変えないまま使わせない導線がここにしか無い。
+   */
+  passwordChangeRequired: boolean;
+  setPasswordChangeRequired: (required: boolean) => void;
   signIn: (staffId: string) => void;
   signOut: () => void;
 

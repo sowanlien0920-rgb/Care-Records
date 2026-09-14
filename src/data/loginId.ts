@@ -22,6 +22,22 @@
  * `src/types/contract.ts` と同じ扱いで、変更は両方に同時に入れること。
  */
 
+/**
+ * 発行時の初期パスワード。kpi-react の `AccountPage.jsx:23` と同じ値。
+ *
+ * **全アカウントで共通であり、変更を強制する仕掛けが無かった**
+ * （`docs/security/2026-09-14-audit.md` の High）。ログイン ID は
+ * `施設コード + 3桁連番` で形が既知なので、変えていないアカウントが1つでもあれば
+ * そこから事業所のデータに入れる。
+ *
+ * carerecords 側は「この値でログインできてしまったら、その場で変更を求める」
+ * ことでしか塞げない（発行は kpi-react 側の責務）。`LoginForm` がこの値との
+ * 一致を見て、`PasswordModal` を強制モードで開く。
+ *
+ * kpi-react が初期パスワードを変えたら、ここも同時に変えること。
+ */
+export const INITIAL_PASSWORD = '000000';
+
 /** kpi-react の `AccountPage.jsx:43` と同じ */
 function pad(seq: number): string {
   return String(seq).padStart(3, '0');

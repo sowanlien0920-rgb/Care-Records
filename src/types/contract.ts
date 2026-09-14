@@ -34,8 +34,9 @@ import { z } from 'zod';
  * ── 版の履歴 ────────────────────────────────────────────
  * 1: Phase 1a。配信と実施記録の初版
  * 2: Phase 1b。VisitRecord に mood / memo を追加し、noteSource に 'template' を足した
+ * 3: Phase 4。DispatchVisit と VisitRecord に serviceCode を追加した
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * YYYY-MM-DD。形だけでなく実在する日付かも見る。
@@ -66,6 +67,14 @@ export const timeSchema = z.string()
 export const optionalTimeSchema = z.union([z.literal(''), timeSchema]);
 
 /** 訪問介護のサービス区分。legacy/index.html:1640 の SERVICES と一致させる */
+/**
+ * サービス種別。4値に畳んだもの。
+ *
+ * kpi-react の SERVICE_MASTER は算定区分ごとに40以上のコードを持つ
+ * （身体介護01・夜 / 身体1生活2 / 障害・家事1.0 など）。それをこの4値へ
+ * 対応付けたうえで、元のコードは serviceCode に残す。
+ * 記載チェックや帳票はこの4値で判定し、算定区分の細かさは serviceCode で追う。
+ */
 export const serviceKindSchema = z.enum([
   '身体介護',
   '生活援助',
@@ -175,6 +184,17 @@ export const dispatchVisitSchema = z.object({
   visitId: z.string().min(1),
   residentId: z.string().min(1),
   serviceName: serviceKindSchema,
+  /**
+   * kpi-react の算定コード。SERVICE_MASTER のキーそのもの（例: 身体介護01・夜）。
+   * serviceName はこれを4値へ畳んだ結果であり、畳む前の区分をここに残す。
+   *
+   * 配信してよいと判断した根拠。サービス種別と提供時間帯は訪問介護計画書に
+   * 載る情報であり、ヘルパーが「何をどの区分で提供するか」を知るのは正当である。
+   * 受給資格や請求金額そのものは配信しない。
+   *
+   * 対応するコードが無い場合は空文字（「値がないは空文字」の扱い）。
+   */
+  serviceCode: z.string(),
   startTime: timeSchema,
   endTime: timeSchema,
   /** 事業所名。kpi-react: routePlans.rows[].officeName */
@@ -233,6 +253,15 @@ export const visitRecordSchema = z.object({
   staffId: z.string().min(1),
   residentId: z.string().min(1),
   serviceName: serviceKindSchema,
+  /**
+   * 算定コード。配信の値を写す。
+   *
+   * 配信ドキュメントは日単位で作り直されうるため、記録側に持たないと
+   * 後から算定区分を追えなくなる。実施記録は完結の日から2年（自治体により
+   * 5年）保存する法定文書であり、staffName を ID とは別に残すのと同じ理由で、
+   * 記録単体で読める状態にしておく。
+   */
+  serviceCode: z.string(),
 
   /** 予定時刻。配信の値を写す。実績が予定枠を外れていないかの判定に使う */
   plannedStart: timeSchema,

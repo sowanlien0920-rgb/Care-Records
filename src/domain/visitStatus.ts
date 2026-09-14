@@ -85,6 +85,7 @@ export function newRecordFor(
     staffId: dispatch.staffId,
     residentId: visit.residentId,
     serviceName: visit.serviceName,
+    serviceCode: visit.serviceCode,
     plannedStart: visit.startTime,
     plannedEnd: visit.endTime,
     actualStart: '',

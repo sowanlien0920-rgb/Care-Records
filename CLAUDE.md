@@ -99,3 +99,10 @@ secure context として扱われるため dev server で動作する。
 kpi-react（`../kpi-react`、`github.com/Taka1523/kpi-react`）と Firestore を共有する予定。
 予定表・ルート表から配信ドキュメントを受け取り、実施記録を返す。
 **kpi-react は読み取りのみ行い、変更しない。**
+
+**例外（2026-09-14 に依頼者が解除）。** Phase 3（ヘルパーアカウント基盤）の作業範囲に限り、
+kpi-react のソースを変更してよい。計画書は
+`../kpi-react/docs/plans/2026-09-14-helper-account-phase3.md`。
+Phase 4（配信ドキュメント生成）も同様に解除した（2026-09-14）。計画書は
+`../kpi-react/docs/plans/2026-09-14-dispatch-generation-phase4.md`。
+この例外は Phase 3・4 の範囲に閉じる。それ以外は従来どおり読み取りのみ。

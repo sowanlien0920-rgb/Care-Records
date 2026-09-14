@@ -9,9 +9,21 @@
  * kpi-react 側の実フィールドは docs/plans/2026-09-10-carerecords-react-migration.md
  * の「## 3 既存の実装パターン」を参照。
  */
-import { SCHEMA_VERSION, buildVisitRecord, type Dispatch, type DispatchVisit, type ResidentBrief, type VisitRecord } from '../types/contract';
+import { SCHEMA_VERSION, buildVisitRecord, type Dispatch, type DispatchVisit, type ResidentBrief, type ServiceKind, type VisitRecord } from '../types/contract';
 import type { StaffAccount } from '../types/local';
 import { SERVICE_OPTIONS, TASK_OPTIONS } from '../domain/vocabulary';
+
+/*
+ * 算定コードの見本。Phase 4 で kpi-react が SERVICE_MASTER のキーを入れる項目で、
+ * モックが実データと乖離すると Phase 5 の差し替えで UI 側の修正が発生する。
+ * 実在するキーを写しておく（kpi-react/src/constants.js の SERVICE_MASTER）。
+ */
+const MOCK_SERVICE_CODES: Record<ServiceKind, string> = {
+  身体介護: '身体介護1',
+  生活援助: '生活援助2',
+  '身体＋生活': '身体1生活1',
+  通院等乗降介助: '通院等乗降介助',
+};
 import { addDays, fmt, iso, nowMin, toMin } from '../utils/date';
 
 export const MOCK_FACILITY_ID = 'mock-facility';
@@ -160,10 +172,13 @@ export function mockDispatch(date: string, staffId: string): Dispatch | null {
     if (!resident) break;
     usedResidents.add(resident.residentId);
 
+    const serviceName = SERVICE_OPTIONS[i % SERVICE_OPTIONS.length] ?? '身体介護';
     visits.push({
       visitId: `${date}-${staff.staffId}-${String(i).padStart(2, '0')}`,
       residentId: resident.residentId,
-      serviceName: SERVICE_OPTIONS[i % SERVICE_OPTIONS.length] ?? '身体介護',
+      serviceName,
+      // Phase 4 で kpi-react が入れる算定コードの見本。SERVICE_MASTER のキーを写す
+      serviceCode: MOCK_SERVICE_CODES[serviceName],
       startTime: fmt(clock),
       endTime: fmt(clock + dur),
       officeName: 'そわん訪問介護事業所',
@@ -238,6 +253,7 @@ export function mockSeedRecords(): VisitRecord[] {
           staffId: staff.staffId,
           residentId: v.residentId,
           serviceName: v.serviceName,
+          serviceCode: v.serviceCode,
           plannedStart: v.startTime,
           plannedEnd: v.endTime,
           actualStart: fmt(start),

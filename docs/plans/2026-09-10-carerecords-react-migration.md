@@ -51,6 +51,22 @@ Firebase Hosting（プロジェクト `nursinglog`）へ配置済みである。
 **中身は localStorage のままの Phase 1 版であり、`## 2` の F のとおり単体では実運用に出せない。**
 PWA 化とアダプタの差し替えは Phase 5 に残る。
 
+**契約を版3へ更新した（2026-09-14、Phase 4 の着手に伴う）。**
+`DispatchVisit` と `VisitRecord` に `serviceCode`（kpi-react の算定コード）を追加した。
+kpi-react の `SERVICE_MASTER` は算定区分ごとに40以上のコードを持ち、契約の
+`serviceName` 4値では畳んだ先しか残らないため、畳む前の区分を別項目に保持する。
+配信してよいと判断した根拠は `contract.ts` の当該コメントに記した。
+
+**kpi-react への同期が必要。** Phase 4 で `contract.ts` をコピーする際、
+版3の内容で配置すること。配信生成では `serviceCode` に `SERVICE_MASTER` の
+キーをそのまま入れ、`serviceName` は対応表で4値へ畳む。
+
+**既存の localStorage データは版2のため読めなくなる。** 配信はモックから
+その都度生成するので影響しないが、保存済みの実施記録は `unreadable` として
+扱われる（`localAdapter.readRecords`）。デモデータのみのため実害はないが、
+carerecords.web.app を開いたときに記録が「読めない」と表示される。
+`localStorage` の `visitRecords` を消せば再度蒔かれる。
+
 ## 2. Clarified Requirements
 
 ### 確定

@@ -30,12 +30,32 @@ function pad(seq: number): string {
 /**
  * 施設コード → 施設 ID。
  *
- * **本番の値がまだ入っていない。** 依頼者から受け取って追加する必要がある
- * （kpi-react の AdminPanel で施設ごとに設定されている `facilityCode` と、
- * `facilities` のドキュメント ID の対応）。
- * ここに無い施設コードのログイン ID は、パスワードが合っていても弾かれる。
+ * 2026-09-14、本番の `facilities`（17件）から写した。依頼者が読み上げた
+ * 施設名とコードの対応とも全件一致している。
+ *
+ * **施設が増えたらここに足す。** ここに無い施設コードのログイン ID は、
+ * パスワードが合っていても弾かれる。追加は kpi-react の AdminPanel で
+ * 施設コードを設定したうえで、`facilities` のドキュメント ID と組にする。
  */
 export const FACILITY_CODE_TO_ID: Readonly<Record<string, string>> = {
+  A: 'nanairo',         // ナナイロ
+  B: 'cocolahineno',    // ココラ日根野
+  C: 'koharunosato',    // 小春の里
+  D: 'sazanka',         // さざんか
+  E: 'komorebinosato',  // こもれびの里
+  F: 'habesutonoda',    // ハーベスト野田
+  G: 'haruiro',         // ハルイロ
+  H: 'seseraginosato',  // せせらぎの里
+  I: 'koharubiyori',    // 小春日和
+  J: 'tsumuginosato',   // つむぎの里
+  K: 'futabanosato',    // ふたばの里
+  L: 'haruzora',        // はるぞら
+  M: 'sankokai',        // シンフォニー（ID が施設名から推測できない唯一の施設）
+  N: 'egaobiyori',      // 笑顔日和
+  O: 'mitounosato',     // みとうの里
+  P: 'kagirohi',        // かぎろひ
+  Q: 'tomoni',          // ともに
+
   // エミュレータの seed（`scripts/seedEmulator.ts`）が作る施設
   MOCK: 'mock-facility',
 };

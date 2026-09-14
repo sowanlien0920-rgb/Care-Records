@@ -1,6 +1,6 @@
 ---
 request: carerecords Phase 5a（Firebase Auth によるログインと firestoreAdapter への差し替え）を実装する
-status: planning
+status: implementing
 created: 2026-09-14
 review_required: yes
 ---
@@ -61,13 +61,16 @@ kpi-react 側は 2026-09-14 時点で以下がデプロイ済みである。care
 `CLAUDE.md` の例外は **Phase 3・4 の範囲に閉じており、Phase 5 は含まれない。**
 ルールを触るには依頼者が例外を広げる必要がある。
 
-**`listStaff()` だけは、ルールを変えずに済む代替がある。**
+**2026-09-14、依頼者が例外を広げた。`auditLogs` と `RecordPrefs` の置き場のために
+kpi-react の `firestore.rules` を変更してよい。** 以降この前提で進める。
+`CLAUDE.md` の例外は Phase 3・4 に加えて **Phase 5a のうちルール変更に限り**解除された。
+
+なお `listStaff()` には、ルールを変えずに済む代替もある。
 配信ドキュメント（`facilities/{fid}/dispatches`）は `{date}_{staffId}` で、`staffId` と
 `staffName` を持つ。サ責は自施設の配信を全件読めるため、**配信から職員一覧を導出できる。**
 ただし「その日に訪問が無い職員」は出てこないので、職員切替の選択肢が日によって変わる。
 
-`auditLogs` と `RecordPrefs` には代替が無い。**ルールを広げないなら、この2つは
-`localStorage` に残したままにするしかない**（アダプタが2つの保存先にまたがる形になる）。
+`auditLogs` と `RecordPrefs` には代替が無いため、こちらはルールの変更で対応する。
 
 #### U2. ヒヤリハットの統合先（Phase 1a の決定 J）
 
@@ -80,7 +83,18 @@ kpi-react 側は 2026-09-14 時点で以下がデプロイ済みである。care
 ルール上ヘルパーは他人の `visitRecords` を読めない。**ヘルパーの端末では必ず0になるか、
 権限エラーになる。** 「ヘルパーには出さない」「自分の分だけ数える」のどちらかに決める必要がある。
 
-#### U4. 訪問先の電波が切れたときの挙動
+#### U4-a. 検証に使う施設（2026-09-14 に確定）
+
+**「どの施設でも操作できるように」= 検証する依頼者自身が、という意味。**
+依頼者は既存の全体管理者（`superAdmin` / `admin`）で入る。`isGlobalAdmin()` は
+`inScope()` を素通りするため、**ルールの変更も検証用アカウントの新設も要らない。**
+
+**ヘルパーとサ責は自施設のままとする。** `inScope()`（`firestore.rules:135`）の
+`myFacility() == fid` は変えない。職員が施設をまたぐ話ではないことを確認済み。
+兼務職員の要望が出た場合は `users/{uid}.facilityId` が単数であるところからの
+設計見直しになるため、別の計画として扱う。
+
+#### U4-b. 訪問先の電波が切れたときの挙動
 
 Firestore のオフライン永続化を有効にするかどうか。有効にすると記録は端末に溜まって
 後から同期されるが、**「保存した」と見えて実際は未送信**の状態が生まれる。
@@ -89,9 +103,9 @@ PWA 化と併せて決める。**
 
 ### この前提で計画した
 
-U1 は **「例外を広げてルールを変更できる」前提**で `## 4` を書いている。
-広げられない場合、ステップ6 の内容が変わる（代替案を併記した）。
-U2・U4 は範囲外、U3 はステップ5 で決める。
+**U1 と U4-a は 2026-09-14 に確定した**（上記）。残る未確定は U2（ヒヤリハットの統合先。
+本計画の範囲外）と U4-b（オフライン永続化。Phase 5b）、および U3（ステップ5 で決める）。
+**着手を妨げる未確定は無い。**
 
 ## 3. Existing System Investigation
 
@@ -163,7 +177,7 @@ U2・U4 は範囲外、U3 はステップ5 で決める。
 | `src/store/CareStoreProvider.tsx` | 変更 | アダプタの選択、ログイン状態の保持、ロールの取得元を `users/{uid}` に |
 | `src/data/adapter.ts` | 変更 | 変更なしで済むのが理想。必要なら U3 の結論のみ反映 |
 | `firestore.indexes.json`（kpi-react） | 変更 | 横断クエリの複合インデックス |
-| `firestore.rules`（kpi-react） | 変更 | **U1 の承認が前提。** `auditLogs` / `recordPrefs` / `staffs` 読み |
+| `firestore.rules`（kpi-react） | 変更 | `auditLogs` / `recordPrefs` / `staffs` 読み。**U1 で承認済み** |
 
 ### データ構造の変更
 
@@ -186,9 +200,8 @@ carerecords の `localStorage` にあるのは開発中に作った記録だけ�
 | 5 | 横断クエリ（`listVisitRows` / `getBadgeCounts`）とインデックス。**U3 をここで決める** | 未承認一覧・帳票がヘルパーとサ責の双方で破綻しない |
 | 6 | 残る3経路（`listStaff` / `getPrefs` / `listAuditLogs`）。**U1 の結論で内容が変わる** | 全メソッドが Firestore 実装を持つ、または localStorage 据え置きの理由が書かれている |
 
-ステップ6 は U1 が通らない場合、「`listStaff` は配信から導出、`prefs` と `auditLogs` は
-`localStorage` 据え置き」に差し替える。**その場合アダプタが2つの保存先にまたがるため、
-どのメソッドがどちらを見るかを `firestoreAdapter.ts` の冒頭に明記すること。**
+ステップ6 は U1 が承認されたため、ルールを広げて3経路とも Firestore に置く。
+ルールを触るので、このステップの後に `security-auditor` を通すこと。
 
 ### 適用する Craft Skills
 
@@ -225,11 +238,57 @@ carerecords の `localStorage` にあるのは開発中に作った記録だけ�
 | 3 | 訪問先の電波でのふるまいが未検証（U4） | Phase 5b に送る。5a では既定のまま |
 | 4 | `getBadgeCounts` の `pending`（全職員・全期間）が、ヘルパーの権限では取得できない | U3 としてステップ5 で決める。**ルールに弾かれる前に、アプリ側でロールを見て経路を分ける** |
 | 5 | ログイン ID ↔ メールの変換が kpi-react 側と静かにずれる | `contract.ts` と同じ扱いにし、`updating-contract` の同期手順に `loginId.ts` を加える |
-| 6 | 実データで動かすため、**開発中の操作が本番の `visitRecords` に書かれる** | 検証用の施設・職員を決めてから着手する。これは着手前に依頼者と確認する |
+| 6 | 実データで動かすため、**開発中の操作が本番の `visitRecords` に書かれる** | U4-a のとおり依頼者が全体管理者で検証する。**施設を限定しないので、書き込みは全施設に届きうる。** 記録の作成・承認を試す利用者を、着手時に1人決めてその範囲に留める |
 
 ## 5. Implementation Status
 
-未着手。
+- [x] **ステップ1** — `firebase` の追加、`src/firebase.ts`、env の受け取り（2026-09-14）
+- [ ] ステップ2 — `loginId.ts` と `LoginForm.tsx`
+- [ ] ステップ3 — 配信の読み（`getDispatch`）
+- [ ] ステップ4 — 実施記録の読み書き
+- [ ] ステップ5 — 横断クエリとインデックス。U3 を決める
+- [ ] ステップ6 — 残る3経路。ルール変更を伴う
+
+### ステップ1 の内容
+
+| ファイル | 内容 |
+|---|---|
+| `package.json` | `firebase@^12.19.0` を追加 |
+| `.env.local` | 実値。`.gitignore` 済み。権限は 600 |
+| `.env.example` | キー名のみ |
+| `src/firebase.ts` | 初期化。`app` / `auth` / `db` / `PROJECT_ID` を export |
+
+**env は4つに絞った**（`API_KEY` / `AUTH_DOMAIN` / `PROJECT_ID` / `APP_ID`）。
+kpi-react の `.env` は14個あるが、Storage・Analytics・reCAPTCHA・事故管理プロジェクトは
+carerecords では使わない。**使わない設定を持ち込むと、繋がっていない先に
+繋がっているように読める。**
+
+設定が欠けているときは `required()` が起動時に落とす。`undefined` のまま
+`initializeApp` に渡すと「認証だけ失敗する」「読めるが書けない」のように症状が散らばり、
+設定漏れだと気づくまで遠回りになる。
+
+**永続化は既定（`browserLocalPersistence`）のままにした。** kpi-react は
+`inMemoryPersistence` だが、あちらは事務所の共有端末が前提である。carerecords は
+ヘルパー個人の端末で訪問先から使うため、再読込のたびのログインは成立しない
+（`adapter.ts` の `getSessionStaffId` のコメントと同じ理由）。
+
+### 実装中に気づいた点
+
+**1. 接続先は Hosting のプロジェクトと違う。** carerecords の Hosting は `nursinglog` だが、
+Auth と Firestore は `kpi-system-a718f` を見る。配信も職員アカウントもそちらにあるため。
+**ホスティングと認証が別ドメインにまたがる**ことを `src/firebase.ts` の冒頭に明記した。
+
+**2. App Check が Enforce なら全リクエストが弾かれる。** kpi-react の
+`src/firebase.js:24` に「本番ではコンソールで Enforce に設定」とある。
+コンソールの設定はコードから確認できない。**2026-09-14 時点で未確認のまま進めている。**
+ステップ3 で初めて Firestore を読むので、弾かれるならそこで分かる。
+その場合は `src/firebase.ts` に App Check を足し、reCAPTCHA のサイトキーに
+carerecords のドメインを登録する必要がある。
+
+**3. `src/firebase.ts` はまだどこからも import されていない。**
+型チェック（`tsc -b`）の対象には入っているが、バンドルには含まれていない
+（ビルド後のサイズがステップ1 の前後で 444.14 kB のまま変わらない）。
+**実際に Firebase へ繋がることは、この時点では確認できていない。** ステップ2 以降で確認する。
 
 ## 6. Verification
 

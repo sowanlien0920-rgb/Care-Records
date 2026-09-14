@@ -27,3 +27,8 @@ dist/
 
 # Firebase
 .firebase/
+
+# Firebase エミュレータのログ
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

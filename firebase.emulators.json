@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "エミュレータ専用の設定。firebase.json とは別ファイルにしてある。",
+    "firebase.json に firestore.rules を書くと、carerecords から firebase deploy を",
+    "打ったときに nursinglog へルールを配ってしまう。ルールは kpi-system-a718f のものであり、",
+    "配布先を間違えると本番のアクセス制御が壊れる。分けておけばその事故が起きない。",
+    "起動: npm run emulators",
+    "firestore.rules は ../kpi-react/firestore.rules への symlink。firebase-tools が",
+    "プロジェクト外のパスを拒むため。ルールの実体は kpi-react 側の1つだけに保つ。"
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8085
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

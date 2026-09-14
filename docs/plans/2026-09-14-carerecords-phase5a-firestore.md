@@ -163,6 +163,37 @@ PWA 化と併せて決める。**
 - **ヒヤリハットの統合先**（U2）。`incidentAdapter` は `localStorage` のまま残す
 - **kpi-react 側の実施記録の閲覧・承認画面**。Phase 6
 
+### 開発と検証をエミュレータで行う（2026-09-14 に追加）
+
+**`auth/too-many-requests` で本番の Auth が使えなくなったため、開発と検証を
+Firebase エミュレータで行うことにした。** 依頼者の判断（2026-09-14）。
+
+エミュレータの Auth はスロットルされないので、テスト用のヘルパー・サ責アカウントを
+制限なく作れる。`firestore.rules` を実際に適用した状態で動くため、
+**ステップ6 のルール変更も本番に触れずに検証できる。**
+
+**リスク6（開発中の操作が本番の `visitRecords` に書かれる）はこれで消える。**
+
+前提はすべて揃っている（2026-09-14 に確認）。
+
+| | |
+|---|---|
+| firebase-tools | 15.12.0 |
+| Java | OpenJDK 21.0.10（エミュレータの必須要件） |
+| firestore エミュレータ | kpi-react の `firebase.json` にポート 8085 で設定済み |
+| auth エミュレータ | 設定不要。`--only auth,firestore` で既定ポート（9099）で起動する |
+
+**kpi-react の `firebase.json` は変更しない。** ルール（`firestore.rules`）以外に
+kpi-react を触る必要は無い。エミュレータは kpi-react のディレクトリから起動する。
+
+#### 限界（承知のうえで進める）
+
+- **App Check の判定は先送りになる。** エミュレータでは App Check が掛からないため、
+  `## 2` の懸念（Enforce なら弾かれる）は本番に繋ぐまで分からない
+- **seed はモックデータである。** Phase 4 が実データで生成した配信との突き合わせは、
+  本番に繋いだ時点で別途必要になる。`mock.ts` が実データと乖離していれば、
+  そのぶんだけ本番での手戻りが残る（Phase 1a のリスク3 と同じ話）
+
 ### 変更対象ファイル
 
 | ファイル | 種別 | 内容 |
@@ -178,6 +209,9 @@ PWA 化と併せて決める。**
 | `src/data/adapter.ts` | 変更 | 変更なしで済むのが理想。必要なら U3 の結論のみ反映 |
 | `firestore.indexes.json`（kpi-react） | 変更 | 横断クエリの複合インデックス |
 | `firestore.rules`（kpi-react） | 変更 | `auditLogs` / `recordPrefs` / `staffs` 読み。**U1 で承認済み** |
+| `src/firebase.ts` | 変更 | dev 時のエミュレータ接続（`VITE_USE_EMULATOR`）。**エミュレータ導入で追加** |
+| `scripts/seedEmulator.mjs` | 新規 | エミュレータに職員アカウントと配信を流し込む。**同上** |
+| `package.json` | 変更 | `firebase-admin`（devDependency）と `emulators` / `seed` スクリプト。**同上** |
 
 ### データ構造の変更
 
@@ -238,11 +272,13 @@ carerecords の `localStorage` にあるのは開発中に作った記録だけ�
 | 3 | 訪問先の電波でのふるまいが未検証（U4） | Phase 5b に送る。5a では既定のまま |
 | 4 | `getBadgeCounts` の `pending`（全職員・全期間）が、ヘルパーの権限では取得できない | U3 としてステップ5 で決める。**ルールに弾かれる前に、アプリ側でロールを見て経路を分ける** |
 | 5 | ログイン ID ↔ メールの変換が kpi-react 側と静かにずれる | `contract.ts` と同じ扱いにし、`updating-contract` の同期手順に `loginId.ts` を加える |
-| 6 | 実データで動かすため、**開発中の操作が本番の `visitRecords` に書かれる** | U4-a のとおり依頼者が全体管理者で検証する。**施設を限定しないので、書き込みは全施設に届きうる。** 記録の作成・承認を試す利用者を、着手時に1人決めてその範囲に留める |
+| 6 | ~~実データで動かすため、開発中の操作が本番の `visitRecords` に書かれる~~ | **エミュレータの導入で解消した（2026-09-14）。** 開発中は本番に一切書かない。本番に繋ぐのはステップ6 の後 |
+| 7 | **エミュレータで通ったものが本番で通るとは限らない。** App Check、実データの形、複合インデックスの有無は本番でしか確かめられない | エミュレータでの通過を「検証済み」と書かない。`## 6` で本番と分けて記録する |
 
 ## 5. Implementation Status
 
 - [x] **ステップ1** — `firebase` の追加、`src/firebase.ts`、env の受け取り（2026-09-14）
+- [x] **ステップ1b** — エミュレータ基盤（2026-09-14。計画の追加分）
 - [ ] ステップ2 — `loginId.ts` と `LoginForm.tsx`
 - [ ] ステップ3 — 配信の読み（`getDispatch`）
 - [ ] ステップ4 — 実施記録の読み書き
@@ -272,6 +308,40 @@ carerecords では使わない。**使わない設定を持ち込むと、繋が
 ヘルパー個人の端末で訪問先から使うため、再読込のたびのログインは成立しない
 （`adapter.ts` の `getSessionStaffId` のコメントと同じ理由）。
 
+### ステップ1b（エミュレータ基盤）の内容
+
+| ファイル | 内容 |
+|---|---|
+| `firebase.emulators.json` | 新規。エミュレータ専用の設定 |
+| `firestore.rules` | 新規。`../kpi-react/firestore.rules` への **symlink** |
+| `scripts/seedEmulator.ts` | 新規。Admin SDK で seed する |
+| `src/firebase.ts` | `VITE_USE_EMULATOR=1` のとき `connectAuthEmulator` / `connectFirestoreEmulator` |
+| `package.json` | `firebase-admin` / `tsx`（devDependency）、`emulators` / `seed` スクリプト |
+
+**`firebase.json` にエミュレータ設定を書かなかった。** そこに `firestore.rules` を書くと、
+carerecords から `firebase deploy` を打ったときに **nursinglog へ kpi-system-a718f 用の
+ルールを配ってしまう**。配布先を間違えると本番のアクセス制御が壊れる。
+別ファイル（`firebase.emulators.json`）にしておけばその事故が起きない。
+
+**ルールは symlink にした。** firebase-tools がプロジェクト外のパスを拒む
+（`../kpi-react/firestore.rules is outside of project directory`）ため。
+コピーすると kpi-react と carerecords にルールが2つ存在することになり、
+どちらが正か分からなくなる。symlink なら実体は kpi-react 側の1つだけで済む。
+
+**seed には安全弁を置いた。** Admin SDK はセキュリティルールを迂回するため、
+接続先を間違えると本番の `facilities` 配下にモックが混ざる。
+エミュレータのホストが localhost を指していることを検査し、
+満たさなければ何も書かずに終了する。
+
+動作を確認した（2026-09-14）。
+
+```
+配信 15 件（2026-09-13 / 2026-09-14 / 2026-09-15）
+MOCK001 中山 理恵（supervisor）  MOCK002 佐藤 健一（helper）
+MOCK003 鈴木 美咲（helper）      MOCK004 田中 陽子（helper）
+MOCK005 大橋 直人（facility）    パスワードはいずれも 000000
+```
+
 ### 実装中に気づいた点
 
 **1. 接続先は Hosting のプロジェクトと違う。** carerecords の Hosting は `nursinglog` だが、
@@ -284,6 +354,16 @@ Auth と Firestore は `kpi-system-a718f` を見る。配信も職員アカウ�
 ステップ3 で初めて Firestore を読むので、弾かれるならそこで分かる。
 その場合は `src/firebase.ts` に App Check を足し、reCAPTCHA のサイトキーに
 carerecords のドメインを登録する必要がある。
+
+**4. ログイン ID からメールアドレスを導出できない。**
+kpi-react の `toEmail(facilityId, seq)` は**施設 ID**、`toLoginId(facilityCode, seq)` は
+**施設コード**を使う（`AccountPage.jsx:43-45`）。別の値なので、ログイン ID だけでは
+メールを組み立てられない。対応表を引くには Firestore を読む必要があるが、
+**ログイン前は未認証なので読めない。**
+
+これは Phase 3 の時点で気づかれており、`AccountPage.jsx:38-42` に
+「対応表は carerecords のバンドルに静的に持たせる」と方針が書かれている。
+ステップ2 はこれに従う。**実際の施設コードと施設 ID の対応は依頼者から受け取る必要がある。**
 
 **3. `src/firebase.ts` はまだどこからも import されていない。**
 型チェック（`tsc -b`）の対象には入っているが、バンドルには含まれていない

@@ -23,8 +23,8 @@
  * .env に足さないこと。アクセス制御はルール側（kpi-react の firestore.rules）が担う。
  */
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 
 /**
  * 設定を読む。
@@ -64,6 +64,28 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 export const db = getFirestore(app);
+
+/*
+ * エミュレータ接続。
+ *
+ * 本番の Auth がスロットル（auth/too-many-requests）に当たって使えなくなったため、
+ * 開発と検証はエミュレータで行う。エミュレータの Auth は回数制限が無く、
+ * firestore.rules を実際に適用した状態で動くので、権限まわりも本番に触れずに試せる。
+ *
+ * `import.meta.env.DEV` を必ず併せて見る。**本番ビルドでこの分岐に入ると、
+ * 動いているように見えて何も保存されない**ことになる。
+ * 起動方法は README ではなく計画書
+ * `docs/plans/2026-09-14-carerecords-phase5a-firestore.md` に書いてある。
+ */
+export const USING_EMULATOR =
+  import.meta.env.DEV && import.meta.env.VITE_USE_EMULATOR === '1';
+
+if (USING_EMULATOR) {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8085);
+  // 本番と取り違えたまま操作しないための表示。画面ではなくコンソールに出す
+  console.info('[carerecords] Firebase エミュレータに接続しています（本番ではありません）');
+}
 
 /** 接続先の確認用。画面には出さない */
 export const PROJECT_ID = firebaseConfig.projectId;

@@ -90,7 +90,16 @@ export function PendingModal() {
     : 0);
   const ngTotal = list.reduce((a, r) => a + ngOf(r), 0);
 
-  const selectable = list.filter((r) => deriveStatus(r.visit, r.record) === '済');
+  /*
+   * 未送信の記録は選べない（Phase 5b）。
+   *
+   * この端末にしか無い記録に承認を付けても、届く先が無い。実施一覧の行では
+   * 承認ボタンを「送信待ち」にして塞いであり（`visitList/VisitRow.tsx`）、
+   * ここだけ承認できると画面によって可否が変わることになる。
+   * legacy の「実績未入力の行はチェックできない」と同じ扱いにする。
+   */
+  const selectable = list.filter((r) => deriveStatus(r.visit, r.record) === '済' && !r.pending);
+  const pendingCount = list.filter((r) => deriveStatus(r.visit, r.record) === '済' && r.pending).length;
   const toggle = (id: string) => setSelected((s) => {
     const n = new Set(s);
     if (n.has(id)) n.delete(id); else n.add(id);
@@ -207,6 +216,14 @@ export function PendingModal() {
           {/* legacy/index.html:3498。0件でなければ .lv-ng と同じ色にする */}
           <span className="k" style={ngTotal ? { background: '#fdecef', borderColor: '#f6c9d3', color: '#a3243c' } : undefined}>
             記載チェック要修正<b>{ngTotal}件</b></span>
+          {/*
+            未送信は選べないので、その件数を出しておかないと
+            「承認待ちに出ているのにチェックできない」理由が分からない（Phase 5b）
+          */}
+          {pendingCount > 0 && (
+            <span className="k" style={{ background: '#fff8e8', borderColor: '#f2dfb4', color: '#8a6412' }}>
+              未送信（承認できません）<b>{pendingCount}件</b></span>
+          )}
         </div>
       </div>
 
@@ -238,9 +255,17 @@ export function PendingModal() {
                 // 直下は span 6個。ラッパーを挟むとグリッドが崩れる
                 <div className="pend-row" key={r.visit.visitId} onClick={() => openFromRow(r)}>
                   <span onClick={(e) => e.stopPropagation()}>
+                    {/*
+                      未送信も選べなくする（Phase 5b）。`selectable` から外しただけでは
+                      チェックが入り「1件を選択中」と出るのに、承認を押すと
+                      「承認する記録を選択してください」になる。選んで見えているものが
+                      選ばれていない状態になるため、入力の側で塞ぐ。
+                    */}
                     <input type="checkbox" checked={selected.has(r.visit.visitId)}
-                      disabled={st !== '済'}
-                      title={st !== '済' ? '実績時間が未入力のため承認できません' : undefined}
+                      disabled={st !== '済' || r.pending}
+                      title={st !== '済' ? '実績時間が未入力のため承認できません'
+                        : r.pending ? 'この端末にだけ保存されています。電波が戻ると送信され、承認できるようになります'
+                        : undefined}
                       onChange={() => toggle(r.visit.visitId)} />
                   </span>
                   <span className="dt">{r.date.replace(/-/g, '/')}（{dowOf(r.date)}）

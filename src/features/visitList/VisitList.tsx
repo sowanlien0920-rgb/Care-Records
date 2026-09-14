@@ -24,12 +24,15 @@ export function VisitList() {
   const {
     dispatch, records, filter, retry, notify,
     stampStartAt, stampEndAt, approveVisit, approveAllToday, session, openRecord,
+    alerts, dismissAlert,
   } = useCareStore();
 
   const loading = dispatch.status === 'loading' || records.status === 'loading';
   const plan = dispatch.status === 'ready' ? dispatch.data : null;
   const recs = records.status === 'ready' ? records.data.records : [];
   const unreadable = records.status === 'ready' ? records.data.unreadable : [];
+  // 未送信（Phase 5b）。圏外で保存した記録はここに入り、送られると消える
+  const pendingIds = new Set(records.status === 'ready' ? records.data.pendingVisitIds : []);
 
   // legacy/index.html:1710。予定開始の昇順。未入力は 00:00 と同じ扱いで先頭に来る
   const sorted = [...(plan?.visits ?? [])].sort((a, b) => (toMin(a.startTime) ?? 0) - (toMin(b.startTime) ?? 0));
@@ -96,6 +99,20 @@ export function VisitList() {
       <Filters />
 
       <div className="rows" id="rows">
+        {/*
+          送信できなかった記録と、圏外の保存が成立しない端末であることの知らせ（Phase 5b）。
+          **職員が読んで消すまで残す。** 3秒で消えるトーストに出すと、
+          端末をポケットに入れている間に消え、記録が消えたことが伝わらない。
+          .warnbox は legacy の既存クラス（styles.css:291）で、CSS は足していない。
+        */}
+        {alerts.map((message, i) => (
+          <div className="warnbox" style={{ marginBottom: 10 }} key={message}>
+            {message}
+            <button className="chipbtn" style={{ marginLeft: 10 }} type="button"
+              onClick={() => dismissAlert(i)}>閉じる</button>
+          </div>
+        ))}
+
         {loading && <div className="empty"><div className="ico">⏳</div><p>読み込んでいます…</p></div>}
 
         {dispatch.status === 'error' && (
@@ -131,6 +148,7 @@ export function VisitList() {
             visit={v}
             record={recordOf(v.visitId, recs)}
             resident={plan.residents.find((r) => r.residentId === v.residentId)}
+            pending={pendingIds.has(v.visitId)}
             onStart={() => { void stampStartAt(v.visitId); }}
             onEnd={() => { void stampEndAt(v.visitId); }}
             onApprove={() => { void approveVisit(v.visitId); }}

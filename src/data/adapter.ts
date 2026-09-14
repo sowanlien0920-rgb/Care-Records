@@ -51,6 +51,16 @@ export interface RecordListing {
   records: VisitRecord[];
   /** 読み出せなかった記録。visitId が読めない場合は null が入る */
   unreadable: Array<{ visitId: string | null; reason: string }>;
+  /**
+   * まだ端末から送られていない記録の visitId（Phase 5b）。
+   *
+   * **`VisitRecord` には持たせない。** あちらは kpi-react と共有する契約
+   * （`types/contract.ts`）で、送信できているかは carerecords の端末の事情でしかない。
+   * 契約に混ぜると、kpi-react 側が読む記録に carerecords の端末状態が付いて回る。
+   *
+   * `localStorage` 実装では常に空になる（送信という段階が無い）。
+   */
+  pendingVisitIds: string[];
 }
 
 /**
@@ -82,6 +92,8 @@ export interface VisitRow {
   visit: DispatchVisit;
   record: VisitRecord | undefined;
   resident: ResidentBrief | undefined;
+  /** 記録がまだ端末から送られていない（Phase 5b）。RecordListing の同名の項目と同じ意味 */
+  pending: boolean;
 }
 
 /**
@@ -155,4 +167,23 @@ export interface DataAdapter {
   // ── 変更履歴 ──────────────────────────────────────────────
   listAuditLogs(): Promise<AuditLog[]>;
   appendAuditLog(log: AuditLog): Promise<void>;
+
+  // ── 未送信（Phase 5b） ────────────────────────────────────
+  /**
+   * この端末に溜まっている書き込みが、すべてサーバーに届くまで待つ。
+   *
+   * **これが無いと「未送信」の印が消えない。** 読みは一回読み
+   * （`listRecords` / `listVisitRows`）なので、電波が戻って SDK が
+   * 溜めていた書き込みを送り終えても、**画面が取り直す契機が無い**。
+   * 記録は届いているのに行は「未送信」「送信待ち」のままになり、
+   * その行だけ承認できない状態が残る。
+   *
+   * 購読（`onSnapshot`）にすれば届くが、訪問先で画面を開いている間
+   * ずっと接続することになる（このファイル冒頭と `firestoreAdapter` の
+   * 注記を参照）。待つだけなら接続は増えない。
+   *
+   * 未送信が無ければ即座に解決する。`localStorage` 実装は送信という段階が
+   * 無いので常に即解決になる。
+   */
+  waitForPendingWrites(): Promise<void>;
 }

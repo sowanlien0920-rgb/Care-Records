@@ -189,6 +189,8 @@ export const localAdapter: DataAdapter = {
       // 破損は日付・職員で絞り込めない（絞り込みに使う項目自体が読めないため）。
       // 隠すと欠落に気づけないので、スコープに関わらず全件を返す。
       unreadable,
+      // localStorage には「送信」という段階が無い。書けた時点で保存は終わっている
+      pendingVisitIds: [],
     };
   },
 
@@ -224,6 +226,8 @@ export const localAdapter: DataAdapter = {
             visit: v,
             record: recordOf(v.visitId, records),
             resident: d.residents.find((r) => r.residentId === v.residentId),
+            // localStorage には送信が無いため、未送信も無い
+            pending: false,
           });
         }
       }
@@ -305,6 +309,14 @@ export const localAdapter: DataAdapter = {
     }
     const all = readList(KEY.auditLogs, auditLogSchema);
     writeRaw(KEY.auditLogs, [...all, parsed.data]);
+  },
+
+  /**
+   * localStorage には送信という段階が無い。書けた時点で終わっているので待つものが無い
+   * （`listRecords` の `pendingVisitIds` が常に空なのと同じ理由）。
+   */
+  async waitForPendingWrites(): Promise<void> {
+    // 何もしない
   },
 };
 

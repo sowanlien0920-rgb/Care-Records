@@ -55,6 +55,17 @@ export interface CareStore {
    */
   sessionError: string | null;
   /**
+   * 送信できなかった書き込みと、この端末で圏外の保存が成立しないこと（Phase 5b）。
+   *
+   * **トーストでは足りない。** 圏外での保存は端末に入った時点で返るため、
+   * 権限拒否などはその何秒も後に返り、そのとき Firestore は
+   * ローカルの書き込みを巻き戻す。3秒で消える通知に出すと、
+   * 端末をポケットに入れている間に消え、**記録が消えたことが誰にも伝わらない**。
+   * 職員が読んで消すまで残す必要がある。
+   */
+  alerts: string[];
+  dismissAlert: (index: number) => void;
+  /**
    * 初期パスワードのままログインしたか。true の間は `PasswordModal` が
    * 強制モードで開き、変更するまで閉じられない（legacy の `mustChange`、
    * `index.html:4201`）。発行時の初期値は全アカウント共通のため、

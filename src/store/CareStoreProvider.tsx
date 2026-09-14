@@ -16,8 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from '../data/adapter';
 import { CareStoreContext, type Async, type CareStore, type PanelKind, type RecordFieldPatch } from './context';
-import { clearProfileCache, firestoreAdapter } from '../data/firestoreAdapter';
-import { auth, BACKEND } from '../firebase';
+import { clearProfileCache, firestoreAdapter, onWriteFailure } from '../data/firestoreAdapter';
+import { auth, BACKEND, offlineStorageAvailable } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { iso } from '../utils/date';
 import { newRecordFor, recordOf, type RecordContext } from '../domain/visitStatus';
@@ -177,6 +177,19 @@ function CareStore({
   const [sessionError, setSessionError] = useState<string | null>(null);
   /** 初期パスワードのままログインした。`LoginForm` が立て、`PasswordModal` が降ろす */
   const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
+  /**
+   * 職員が読んで消すまで残す知らせ（Phase 5b）。送信できなかった書き込みと、
+   * 圏外の保存が成立しない端末であること。`notify` のトーストとは別に持つ
+   * （理由は `store/context.ts` の `alerts`）。
+   */
+  const [alerts, setAlerts] = useState<string[]>([]);
+  const pushAlert = useCallback((message: string) => {
+    // 同じ失敗が続けて返ることがある。並べても職員にできることは増えない
+    setAlerts((prev) => (prev.includes(message) ? prev : [...prev, message]));
+  }, []);
+  const dismissAlert = useCallback((index: number) => {
+    setAlerts((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const [staffKeyed, setStaffKeyed] = useState<Keyed<StaffAccount[]> | null>(null);
   const [dispatchKeyed, setDispatchKeyed] = useState<Keyed<Dispatch | null> | null>(null);
@@ -271,6 +284,45 @@ function CareStore({
       .catch((e) => { if (alive) setStaffKeyed({ key: staffKey, result: toAsyncError(e) }); });
     return () => { alive = false; };
   }, [adapter, staffKey, signedIn]);
+
+  /*
+   * 送信できなかった書き込みを職員に伝える（Phase 5b）。
+   *
+   * 圏外での保存は端末に入った時点で成功として返るため、権限拒否などは
+   * その何秒も後に返る。**そのとき Firestore はローカルの書き込みを巻き戻す**ので、
+   * 黙っていると「保存したはずの記録が消えている」ことになる。
+   */
+  useEffect(() => {
+    if (BACKEND !== 'firestore') return;
+    onWriteFailure((message) => {
+      pushAlert(message);
+      /*
+       * **取り直しが要る。** 巻き戻された記録は端末にもサーバーにも無いのに、
+       * 画面が持っている一覧は保存直後のまま（記録あり）になっている。
+       * 取り直さないと、消えた記録が「済」のまま残り続ける。
+       */
+      setReloadToken((n) => n + 1);
+    });
+    return () => { onWriteFailure(null); };
+  }, [pushAlert]);
+
+  /*
+   * 圏外の保存が成立しない端末であることを、圏外になる前に伝える（Phase 5b）。
+   *
+   * プライベートブラウズや容量不足では IndexedDB が開けず、SDK は黙って
+   * メモリキャッシュに落ちる。そのまま圏外で保存すると行に「未送信」は出るが、
+   * **タブを閉じた時点で記録ごと消える。**
+   */
+  useEffect(() => {
+    if (BACKEND !== 'firestore') return;
+    let alive = true;
+    void offlineStorageAvailable.then((ok) => {
+      if (!alive || ok) return;
+      pushAlert('この端末では電波が切れている間の保存ができません。'
+        + '電波が届く場所で記録してください。');
+    });
+    return () => { alive = false; };
+  }, [pushAlert]);
 
   /*
    * Firebase Auth のログイン状態を購読する。
@@ -401,7 +453,7 @@ function CareStore({
   );
   const records = useMemo<Async<RecordListing>>(
     () => (staffId === null
-      ? { status: 'ready', data: { records: [], unreadable: [] } }
+      ? { status: 'ready', data: { records: [], unreadable: [], pendingVisitIds: [] } }
       : resolve(recordsKeyed, scopedKey)),
     [staffId, recordsKeyed, scopedKey],
   );
@@ -411,6 +463,42 @@ function CareStore({
       : resolve(badgesKeyed, badgeKey)),
     [session, badgesKeyed, badgeKey],
   );
+
+  /*
+   * 未送信が送られ終わったら、一覧を取り直す（Phase 5b）。
+   *
+   * 読みは一回読みなので、**電波が戻って SDK が送り終えても画面は気づかない**。
+   * 記録は届いているのに行は「未送信」「送信待ち」のままで、その行だけ
+   * 承認できない状態が残る（`adapter.ts` の `waitForPendingWrites` の注記）。
+   *
+   * 実施一覧と横断一覧の両方を見る。サービス提供責任者は未承認一覧から
+   * 別の日の記録を扱うため、表示中の日付の外で溜まった書き込みもある。
+   * `reloadToken` は実施記録・横断一覧・バッジの3つを同時に取り直すので、
+   * 契機はここ1つで足りる。
+   */
+  const pendingSignature = [
+    ...(records.status === 'ready' ? records.data.pendingVisitIds : []),
+    ...(visitRows.status === 'ready'
+      ? visitRows.data.filter((r) => r.pending).map((r) => r.visit.visitId)
+      : []),
+  ].sort().join(',');
+  /** 待って取り直した顔ぶれ。同じものが残ったときに待ち直さないために持つ */
+  const waitedSignature = useRef<string | null>(null);
+  useEffect(() => {
+    if (pendingSignature === '') { waitedSignature.current = null; return; }
+    /*
+     * 待って取り直したのに同じ顔ぶれが残るなら、もう一度待っても変わらない。
+     * 取得 → 未送信あり → 待つ → 取得、が途切れずに回り続けるのを止める。
+     */
+    if (waitedSignature.current === pendingSignature) return;
+    waitedSignature.current = pendingSignature;
+    let alive = true;
+    adapter.waitForPendingWrites()
+      .then(() => { if (alive) setReloadToken((n) => n + 1); })
+      // 職員が入れ替わると reject する。そのときは authToken の側で取り直される
+      .catch(() => { /* 取り直しの契機が1つ減るだけで、ほかに影響しない */ });
+    return () => { alive = false; };
+  }, [adapter, pendingSignature]);
 
   /**
    * 変更履歴を1件残す。legacy の `pushLog()`（`index.html:2968`）にあたる。
@@ -643,10 +731,21 @@ function CareStore({
     const list = records.status === 'ready' ? records.data.records : [];
     const plan = dispatch.status === 'ready' ? dispatch.data : null;
     const ids = new Set(plan?.visits.map((v) => v.visitId) ?? []);
+    /*
+     * 未送信の記録は対象から外す（Phase 5b）。
+     *
+     * この端末にしか無い記録に承認を付けても、サ責の端末には届いていない。
+     * 行の承認ボタンは「送信待ち」にして塞いであるのに、ここから一括で
+     * 承認できると**画面によって承認できたりできなかったりする**ことになる。
+     */
+    const pending = new Set(records.status === 'ready' ? records.data.pendingVisitIds : []);
     // legacy/index.html:1824。対象はその日その職員の「済」。絞り込みは無視する
-    const targets = list.filter((r) => ids.has(r.visitId) && r.status === '済');
+    const targets = list.filter((r) => ids.has(r.visitId) && r.status === '済' && !pending.has(r.visitId));
     if (targets.length === 0) {
-      notify('承認できる「済」の記録がありません');
+      const waiting = list.filter((r) => ids.has(r.visitId) && r.status === '済' && pending.has(r.visitId)).length;
+      notify(waiting > 0
+        ? `未送信の記録が ${waiting} 件あります。電波が戻ってから承認してください`
+        : '承認できる「済」の記録がありません');
       return;
     }
     if (!window.confirm(`「済」${targets.length}件を承認して完了にします。よろしいですか？`)) return;
@@ -680,6 +779,7 @@ function CareStore({
     date, setDate,
     session, sessionRestoring, sessionError, signIn, signOut,
     passwordChangeRequired, setPasswordChangeRequired,
+    alerts, dismissAlert,
     staffId, setStaffId,
     filter, setFilter,
     editingVisitId, openRecord, closeRecord,
@@ -693,7 +793,7 @@ function CareStore({
     notification, notify,
   }), [
        date, session, sessionRestoring, sessionError, signIn, signOut,
-       passwordChangeRequired, staffId, setStaffId, filter,
+       passwordChangeRequired, alerts, dismissAlert, staffId, setStaffId, filter,
        editingVisitId, openRecord, closeRecord, residentModalOpen, selectedResidentId, openResident,
        closeResident, staff, dispatch, records, badges, visitRows,
        saveRecord, deleteRecord, updateRecordFields, getPrefs, savePrefs, incidents, saveIncident,

@@ -24,17 +24,30 @@
  */
 import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
+import {
+  connectFirestoreEmulator, initializeFirestore, persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 
 /**
  * どちらの永続化を使うか。
  *
  * Phase 5a の移行中は両方を残す。`localStorage` 側を消してしまうと、
  * Firestore 側で詰まったときに動かせるものが何も無くなる。
- * 既定は `local`。Firestore を使うときだけ明示的に切り替える。
+ *
+ * **ただし本番ビルドは常に `firestore` にする。** 以前は既定が `local` で、
+ * `VITE_BACKEND` を渡し忘れたビルドが「パスワード認証の無いアプリ」として
+ * 本番に出ていた（`docs/security/2026-09-14-audit.md` の Critical / High 1）。
+ * ビルドは成功し警告も出ないため、出るまで気づけない形になっていた。
+ * `local` は開発時の逃げ道としてのみ残し、本番では選べなくする。
+ *
+ * 設定漏れは実行時ではなくビルド時に落とす（`vite.config.ts` の
+ * `requireFirebaseEnv`）。実行時に落とすと本番が白画面になるだけで、
+ * 何が足りないかが利用者にも開発者にも伝わらない。
  */
-export const BACKEND: 'local' | 'firestore' =
-  import.meta.env.VITE_BACKEND === 'firestore' ? 'firestore' : 'local';
+export const BACKEND: 'local' | 'firestore' = import.meta.env.DEV
+  ? (import.meta.env.VITE_BACKEND === 'firestore' ? 'firestore' : 'local')
+  : 'firestore';
 
 /**
  * 設定を読む。
@@ -77,7 +90,67 @@ export const app = initializeApp(firebaseConfig);
  */
 export const auth = getAuth(app);
 
-export const db = getFirestore(app);
+/**
+ * Firestore。**オフライン永続化を有効にしてある**（Phase 5b）。
+ *
+ * 訪問先で電波が切れても記録を付けられるようにするため、書き込みは
+ * いったん端末（IndexedDB）に入り、復帰後に自動で送られる。
+ * 未送信のあいだは `hasPendingWrites` が立つので、画面はそれを見て
+ * 「未送信」を出す（`firestoreAdapter.ts`）。
+ *
+ * **「保存した」の意味が変わる。** サーバーに届いたことではなく、
+ * 端末に残ったことを指すようになる。記録は法定文書なので、
+ * 未送信を職員から見えなくしてはならない。
+ *
+ * `persistentMultipleTabManager` を使う。単一タブ用のまま2つ目のタブを
+ * 開かれると、後から開いた側が永続化を得られず動かなくなる。
+ *
+ * **圏外で「アプリを起動する」ことはできない。** それには Service Worker が要る。
+ * 入れない判断は依頼者と確認済み（計画書 U-d）。ここで効くのは、
+ * すでに開いているアプリが圏外に入った場合になる。
+ */
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
+
+/**
+ * この端末で圏外の保存が成立するか。
+ *
+ * **`initializeFirestore` は IndexedDB が使えないことを投げない。** SDK は
+ * 起動時に非同期で気づき、**黙ってメモリキャッシュに落として警告を出すだけ**になる
+ * （`canFallbackFromIndexedDbError`）。try/catch では捕まらない。
+ *
+ * 落ちないのは良いが、**永続化が効いていない端末と効いている端末の区別が
+ * つかないまま動く**のは困る。プライベートブラウズや容量不足の端末では、
+ * 圏外で保存した記録は行に「未送信」が出るのにタブを閉じた時点で消える。
+ * 法定文書の記録として、これがいちばん静かで見つけにくい失われ方になる。
+ *
+ * そこで IndexedDB を実際に開けるかを自分で試し、結果を画面に伝えられるようにする。
+ * 開けたかどうかしか分からない（容量が尽きるのは後の話）ので、
+ * **「使えない」は確実だが「使える」は見込みである**ことを前提に扱う。
+ */
+export const offlineStorageAvailable: Promise<boolean> = (async () => {
+  if (BACKEND !== 'firestore') return false;
+  if (typeof indexedDB === 'undefined') return false;
+  return new Promise<boolean>((resolve) => {
+    let req: IDBOpenDBRequest;
+    try {
+      req = indexedDB.open('carerecords-offline-probe');
+    } catch {
+      // Safari のプライベートブラウズは open 自体を投げることがある
+      resolve(false);
+      return;
+    }
+    req.onsuccess = () => {
+      req.result.close();
+      // 試したものを残さない。次回の判定に影響させない
+      try { indexedDB.deleteDatabase('carerecords-offline-probe'); } catch { /* 残っても害は無い */ }
+      resolve(true);
+    };
+    req.onerror = () => resolve(false);
+    req.onblocked = () => resolve(false);
+  });
+})();
 
 /*
  * エミュレータ接続。

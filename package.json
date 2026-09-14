@@ -10,7 +10,8 @@
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
     "emulators": "npx --yes firebase-tools emulators:start --only auth,firestore --project kpi-system-a718f --config firebase.emulators.json",
-    "seed": "tsx scripts/seedEmulator.ts"
+    "seed": "tsx scripts/seedEmulator.ts",
+    "icons": "tsx scripts/renderIcons.ts"
   },
   "dependencies": {
     "firebase": "^12.19.0",

@@ -24,3 +24,6 @@ dist/
 *.bak
 *.tmp
 ~$*
+
+# Firebase
+.firebase/

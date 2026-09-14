@@ -1,0 +1,40 @@
+{
+  "hosting": [
+    {
+      "target": "app",
+      "public": "dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    },
+    {
+      "target": "legacy-url",
+      "public": "hosting-redirect",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "redirects": [
+        {
+          "source": "/",
+          "destination": "https://carerecords.web.app/",
+          "type": 301
+        },
+        {
+          "source": "/:path*",
+          "destination": "https://carerecords.web.app/:path*",
+          "type": 301
+        }
+      ]
+    }
+  ]
+}

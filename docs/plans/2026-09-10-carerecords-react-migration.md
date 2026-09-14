@@ -32,13 +32,24 @@ review_required: yes
 | Phase | 内容 | 対象リポジトリ |
 |---|---|---|
 | **1** | **carerecords を React + Vite + TS 化（localStorage のまま、新データモデル + アダプタ境界）** | **carerecords** |
-| 2 | Firestore ルール作り直し + kpi-react 全経路の回帰確認 | kpi-react（実装済み・未デプロイ。`../kpi-react/docs/plans/2026-09-11-firestore-rules-phase2.md`） |
+| 2 | Firestore ルール作り直し + kpi-react 全経路の回帰確認 | kpi-react（**2026-09-14 デプロイ済み・動作確認済み**。`../kpi-react/docs/plans/2026-09-11-firestore-rules-phase2.md`） |
 | 3 | ヘルパーアカウント基盤（`users` 拡張、発行UI） | kpi-react |
 | 4 | 配信ドキュメント生成（`saveVisitRoute` に相乗り） | kpi-react |
 | 5 | carerecords のアダプタを Firestore に差し替え + PWA + Hosting | carerecords |
 | 6 | kpi-react 側に実施記録の閲覧・承認画面 | kpi-react |
 
 Phase 1 と Phase 2 は独立しており並行できる。
+
+**2026-09-14 の実績。** Phase 2 をデプロイした（ロール付与 → インデックス → ルールの順。
+ltc-inventory・kpi-react の両系統で動作確認済み）。narse-mate はプロジェクトとして
+稼働していないため対象から外し、取り込み用 `viewer` アカウントの発行は見送った。
+ルール適用により匿名認証の経路は閉じている。
+
+**Hosting を Phase 5 から前倒しした。** 表では Phase 5 の項目だが、carerecords を
+Firebase Hosting（プロジェクト `nursinglog`）へ配置済みである。
+`app` → `carerecords.web.app`、`legacy-url` → `nursinglog.web.app` は 301 で前者へ転送する。
+**中身は localStorage のままの Phase 1 版であり、`## 2` の F のとおり単体では実運用に出せない。**
+PWA 化とアダプタの差し替えは Phase 5 に残る。
 
 ## 2. Clarified Requirements
 

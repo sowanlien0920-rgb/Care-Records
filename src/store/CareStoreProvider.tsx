@@ -17,6 +17,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from '../data/adapter';
 import { CareStoreContext, type Async, type CareStore, type PanelKind, type RecordFieldPatch } from './context';
 import { localAdapter } from '../data/localAdapter';
+import { clearProfileCache, firestoreAdapter } from '../data/firestoreAdapter';
+import { auth, BACKEND } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { iso } from '../utils/date';
 import { newRecordFor, recordOf, type RecordContext } from '../domain/visitStatus';
 import { stampEnd, stampStart } from '../domain/timeValidation';
@@ -52,9 +55,18 @@ function resolve<T>(keyed: Keyed<T> | null, key: string): Async<T> {
   return keyed !== null && keyed.key === key ? keyed.result : { status: 'loading' };
 }
 
+/**
+ * 既定のアダプタ。
+ *
+ * Phase 5a の移行中は `VITE_BACKEND` で切り替える。`localStorage` 側を消すと、
+ * Firestore 側で詰まったときに動かせるものが無くなるため、両方を残しておく。
+ */
+const defaultAdapter: DataAdapter =
+  BACKEND === 'firestore' ? firestoreAdapter : localAdapter;
+
 export function CareStoreProvider({
   children,
-  adapter = localAdapter,
+  adapter = defaultAdapter,
 }: {
   children: ReactNode;
   adapter?: DataAdapter;
@@ -77,6 +89,15 @@ export function CareStoreProvider({
   const [reloadToken, setReloadToken] = useState(0);
   /** 職員一覧の再取得。retry() のときだけ進める */
   const [staffToken, setStaffToken] = useState(0);
+  /**
+   * Firebase Auth のログイン状態が変わったことを伝えるトークン。
+   *
+   * localStorage 実装では「保存されている職員 ID」を1回読めば済んだが、
+   * Firebase Auth では**ログインがこのコンポーネントの外で起きる**
+   * （LoginForm が signInWithEmailAndPassword を呼ぶ）。
+   * 購読しないと、ログインしても画面がログインフォームのまま変わらない。
+   */
+  const [authToken, setAuthToken] = useState(0);
 
   const [staffKeyed, setStaffKeyed] = useState<Keyed<StaffAccount[]> | null>(null);
   const [dispatchKeyed, setDispatchKeyed] = useState<Keyed<Dispatch | null> | null>(null);
@@ -161,15 +182,32 @@ export function CareStoreProvider({
     return () => { alive = false; };
   }, [adapter, staffKey]);
 
-  // 保存済みの職員選択を復元する。Phase 5 では Firebase Auth の永続化に置き換わる
+  /*
+   * Firebase Auth のログイン状態を購読する。
+   *
+   * 初回の復元（永続化されたセッションの読み出し）もここを通る。
+   * 職員が変われば見えてよいものが変わるため、覚えている職員情報を捨て、
+   * 職員一覧と取得中のものを全部取り直す。
+   */
+  useEffect(() => {
+    if (BACKEND !== 'firestore') return;
+    return onAuthStateChanged(auth, () => {
+      clearProfileCache();
+      setAuthToken((n) => n + 1);
+      setStaffToken((n) => n + 1);
+      setReloadToken((n) => n + 1);
+    });
+  }, []);
+
+  // 保存済みの職員選択を復元する。Firestore では Firebase Auth の永続化が担う
   useEffect(() => {
     let alive = true;
     adapter.getSessionStaffId()
       .then((id) => { if (alive) setSessionSlot({ staffId: id }); })
-      // 復元できないことはログインを止める理由にならない。職員選択から始める
+      // 復元できないことはログインを止める理由にならない。ログインからやり直す
       .catch(() => { if (alive) setSessionSlot({ staffId: null }); });
     return () => { alive = false; };
-  }, [adapter]);
+  }, [adapter, authToken]);
 
   // 配信
   useEffect(() => {

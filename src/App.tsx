@@ -7,6 +7,8 @@
 import { CareStoreProvider } from './store/CareStoreProvider';
 import { useCareStore } from './store/useCareStore';
 import { StaffPicker } from './features/auth/StaffPicker';
+import { LoginForm } from './features/auth/LoginForm';
+import { BACKEND } from './firebase';
 import { Header } from './features/shell/Header';
 import { DateBar } from './features/shell/DateBar';
 import { Toolbar } from './features/shell/Toolbar';
@@ -23,7 +25,12 @@ import { TimelineModal } from './features/timeline/TimelineModal';
 function Shell() {
   const { session, notification } = useCareStore();
 
-  if (session === null) return <StaffPicker />;
+  /*
+   * 未ログインのときに出すもの。
+   * Firestore では Firebase Auth のログインフォーム、localStorage では
+   * Phase 1a の簡易ログイン（職員を選ぶだけ）になる。
+   */
+  if (session === null) return BACKEND === 'firestore' ? <LoginForm /> : <StaffPicker />;
 
   return (
     <>

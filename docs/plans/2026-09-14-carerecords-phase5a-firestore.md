@@ -279,11 +279,11 @@ carerecords の `localStorage` にあるのは開発中に作った記録だけ�
 
 - [x] **ステップ1** — `firebase` の追加、`src/firebase.ts`、env の受け取り（2026-09-14）
 - [x] **ステップ1b** — エミュレータ基盤（2026-09-14。計画の追加分）
-- [ ] ステップ2 — `loginId.ts` と `LoginForm.tsx`
-- [ ] ステップ3 — 配信の読み（`getDispatch`）
-- [ ] ステップ4 — 実施記録の読み書き
-- [ ] ステップ5 — 横断クエリとインデックス。U3 を決める
-- [ ] ステップ6 — 残る3経路。ルール変更を伴う
+- [x] **ステップ2** — `loginId.ts` と `LoginForm.tsx`（2026-09-14）
+- [x] **ステップ3** — 配信の読み（`getDispatch`）（2026-09-14）
+- [x] **ステップ4** — 実施記録の読み書き（2026-09-14）
+- [x] **ステップ5** — 横断クエリ。U3 を決めた（2026-09-14）。**複合インデックスは未作成**
+- [x] **ステップ6** — 残る3経路とルール変更（2026-09-14）。**ルールは未デプロイ**
 
 ### ステップ1 の内容
 
@@ -342,6 +342,34 @@ MOCK003 鈴木 美咲（helper）      MOCK004 田中 陽子（helper）
 MOCK005 大橋 直人（facility）    パスワードはいずれも 000000
 ```
 
+### ステップ2〜6 の内容
+
+| ファイル | 内容 |
+|---|---|
+| `src/data/loginId.ts` | 新規。ログイン ID ↔ メールの変換と施設コードの対応表 |
+| `src/features/auth/LoginForm.tsx` | 新規。legacy の `.login`（`index.html:741-807`）を写した |
+| `src/data/firestoreAdapter.ts` | 新規。`DataAdapter` の全メソッド |
+| `src/store/CareStoreProvider.tsx` | `onAuthStateChanged` の購読、アダプタの選択 |
+| `src/App.tsx` | 未ログイン時に出すものを backend で出し分け |
+| `src/firebase.ts` | `BACKEND`（`VITE_BACKEND`）の追加 |
+| `firestore.rules`（kpi-react） | `recordPrefs` / `auditLogs` / `staffs` 読み / **配信の get と list の分離** |
+
+#### 決めたこと
+
+**U3（バッジの `pending`）: 承認権限を持つ職員だけが数える。**
+ルール上ヘルパーは他人の記録を読めず、全件を数えようとすると permission-denied になる。
+画面側も未承認一覧のボタンを `canApprove` で出し分けており（`features/shell/Toolbar.tsx:36`）、
+ヘルパーには元から表示されない。**数えずに 0 を返すのが実態と一致する。**
+
+**carerecords の変更履歴は `facilities/{fid}/auditLogs` に置く。**
+トップレベルの `auditLogs` は kpi-react の操作履歴で、形も用途も違う。
+同じコレクションに混ぜると kpi-react の履歴画面に carerecords の行が混入する。
+
+**職員の権限は `users/{uid}` からのみ取る。** `facilities/{fid}/staffs` は表示用のマスタで、
+承認権限を持たない。`listStaff()` は自分自身の行だけ `users` の値で上書きし、
+他の職員は承認権限なしとして返す。他人の `users` を読む権限は無く、
+他人の承認権限を画面が使う箇所も無い。
+
 ### 実装中に気づいた点
 
 **1. 接続先は Hosting のプロジェクトと違う。** carerecords の Hosting は `nursinglog` だが、
@@ -354,6 +382,23 @@ Auth と Firestore は `kpi-system-a718f` を見る。配信も職員アカウ�
 ステップ3 で初めて Firestore を読むので、弾かれるならそこで分かる。
 その場合は `src/firebase.ts` に App Check を足し、reCAPTCHA のサイトキーに
 carerecords のドメインを登録する必要がある。
+
+**5. ヘルパーは配信を「1件取得」できても「一覧クエリ」ができなかった。**
+**計画のリスク1 が実際に起きた。** ルールの `myDispatchId()`（`firestore.rules:320`）は
+doc ID で判定しているが、**クエリに対するルールは「その絞り込みで返りうる全件が条件を満たすか」を
+クエリの where だけから証明する必要があり、doc ID の形は where で絞れない。**
+そのためヘルパーの `where('staffId','==',自分)` すら permission-denied になっていた。
+
+**症状が出ない形で壊れていた。** `Toolbar.tsx:27` は取得できないとき 0 を表示するため、
+未完了バッジが「0件」と出るだけで、エラーも警告も出なかった。
+記録が1件も無い状態で 0 はおかしいと気づいて初めて分かった。
+
+`allow read` を `allow get` と `allow list` に分けて直した。
+get は doc ID（配信が無い日に resource が null になるため）、list は
+`resource.data.staffId` で判定する。エミュレータで、絞り込み無しの全件取得が
+ヘルパーに対して今も拒否されることを確認済み。
+
+**エミュレータを入れていなければ、本番で初めて分かっていた。**
 
 **4. ログイン ID からメールアドレスを導出できない。**
 kpi-react の `toEmail(facilityId, seq)` は**施設 ID**、`toLoginId(facilityCode, seq)` は
@@ -372,7 +417,52 @@ kpi-react の `toEmail(facilityId, seq)` は**施設 ID**、`toLoginId(facilityC
 
 ## 6. Verification
 
-未実施。
+**実装者による確認であり、`verifying-changes` の検証ではない。**
+`## 5` のチェックと同じ扱いで読むこと。
+
+### エミュレータで確認したこと（2026-09-14）
+
+headless ブラウザで実際に操作した結果のみを書く。
+
+| 項目 | 結果 |
+|---|---|
+| ログイン画面が出る | `.login` が `display:flex`（`on` が効いている） |
+| 空のまま送信 | `.lg-err` に `on` が付き「職員IDとパスワードを入力してください。」 |
+| 目のトグル | `#lgPw` の type が text になり `.lg-eye` に `on` |
+| 誤ったパスワード | 「職員IDまたはパスワードが正しくありません。」。**入力したパスワードは消えない** |
+| ヘルパー（MOCK002）でログイン | 佐藤 健一 / 訪問介護員。配信6件が表示。未完了 11 |
+| ヘルパーの権限 | 未承認一覧ボタンと帳票ボタンが**出ない** |
+| ログアウト | ログイン画面に戻る |
+| サ責（MOCK001）でログイン | 中山 理恵 / サービス提供責任者。配信12件。未完了 23 / 未承認 0 |
+| サ責の権限 | 未承認一覧・帳票の両ボタンが出る |
+| コンソールエラー | 0件 |
+
+ルールの効き方は Firestore のクエリを直接叩いて確認した。
+
+| クエリ（ヘルパーとして） | 結果 |
+|---|---|
+| `dispatches` を `staffId == 自分` で絞る | 3件（通る） |
+| `dispatches` を `staffId == 自分` + `date <= 今日` | 2件（通る） |
+| **`dispatches` を絞り込み無しで全件** | **permission-denied（意図どおり拒否）** |
+| `visitRecords` を `staffId == 自分` で絞る | 0件（記録が無いため。通る） |
+| `staffs` | 5件（通る） |
+
+### 未確認（本番でしか確かめられない）
+
+- [ ] **App Check。** Enforce なら全リクエストが弾かれる。エミュレータでは掛からない
+- [ ] **複合インデックス。** `staffId` + `date` の組み合わせで引いている。
+      エミュレータはインデックスを要求しないため、**本番で
+      「The query requires an index」になる可能性がある。** `firestore.indexes.json` は未作成
+- [ ] **実データの形。** seed はモックであり、Phase 4 が実データで生成した配信では試していない
+- [ ] **施設コードの対応表。** `loginId.ts` にはエミュレータ用の1件しか入っていない。
+      本番の施設コード → 施設 ID を受け取るまで、本番ではログインできない
+- [ ] スマホ実機
+
+### 未実施
+
+- 承認の経路（`canApprove` を持つ職員が承認したときにルールが承認者 ID を固定する部分）
+- 記録の保存・削除を実際に行う操作（`saveRecord` / `deleteRecord` はコードのみ）
+- 記録設定（`getPrefs` / `savePrefs`）と変更履歴の読み書き
 
 ## 7. Result
 

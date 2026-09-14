@@ -27,15 +27,29 @@ import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 
 /**
+ * どちらの永続化を使うか。
+ *
+ * Phase 5a の移行中は両方を残す。`localStorage` 側を消してしまうと、
+ * Firestore 側で詰まったときに動かせるものが何も無くなる。
+ * 既定は `local`。Firestore を使うときだけ明示的に切り替える。
+ */
+export const BACKEND: 'local' | 'firestore' =
+  import.meta.env.VITE_BACKEND === 'firestore' ? 'firestore' : 'local';
+
+/**
  * 設定を読む。
  *
- * 欠けたまま起動させない。`undefined` のまま initializeApp に渡すと
+ * 欠けたまま Firestore に繋がせない。`undefined` のまま initializeApp に渡すと
  * 認証だけが失敗する、読めるが書けない、といった形で症状が散らばり、
  * 原因が設定漏れだと気づくまで遠回りになる。
+ *
+ * `local` のときは検査しない。Firebase を一切使わない構成でも
+ * アプリが起動しなくなるのを避けるため。
  */
 function required(name: string): string {
   const value = import.meta.env[name] as string | undefined;
   if (!value) {
+    if (BACKEND === 'local') return '';
     throw new Error(
       `Firebase の設定 ${name} がありません。.env.example を参考に .env.local を作ってください。`,
     );
@@ -78,7 +92,9 @@ export const db = getFirestore(app);
  * `docs/plans/2026-09-14-carerecords-phase5a-firestore.md` に書いてある。
  */
 export const USING_EMULATOR =
-  import.meta.env.DEV && import.meta.env.VITE_USE_EMULATOR === '1';
+  BACKEND === 'firestore'
+  && import.meta.env.DEV
+  && import.meta.env.VITE_USE_EMULATOR === '1';
 
 if (USING_EMULATOR) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });

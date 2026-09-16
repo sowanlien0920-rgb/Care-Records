@@ -176,9 +176,17 @@ export const residentBriefSchema = z.object({
 /**
  * 配信される1件の訪問。
  *
- * visitId は kpi-react が採番する。現行の visitKey（`${routePlanId}#${rowId}`、
- * VisitRoutePage.jsx:781）をそのまま使うと doc ID に利用者氏名が入るため、
- * Phase 4 では採番に置き換える。
+ * visitId は kpi-react が採番する。形は次のとおり（`utils/dispatch.js`）。
+ *
+ *   予定由来  `${date}#${residentId}#${rowId}`
+ *   手動追加  `${date}#${visitKey}`（visitKey は `m_...` で氏名を含まない）
+ *
+ * **氏名を入れない。** 予定表の visitKey は `${routePlanId}#${rowId}` で、
+ * routePlanId が `年月_氏名` になっている。そのまま使うと配信と実施記録の
+ * doc ID に利用者氏名が載る。実施記録は完結の日から2年（自治体により5年）
+ * 保存する法定文書であり、doc ID は後から変えられない。
+ *
+ * 日付を含めるのは、visitKey に日付が無く、同じ利用者の別日が衝突するため。
  */
 export const dispatchVisitSchema = z.object({
   visitId: z.string().min(1),

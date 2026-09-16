@@ -316,9 +316,14 @@ function splitRecords(raws: RawRecord[]): {
  * 未送信かどうかは一回読みの結果にも付いてくる（`metadata.hasPendingWrites`）。
  * 購読を増やさずに取れるので、Phase 5a の「onSnapshot にしない」判断は崩れない。
  */
-async function fetchRecords(fid: string, constraints: QueryConstraint[]): Promise<RawRecord[]> {
+async function fetchRecords(
+  fid: string, constraints: QueryConstraint[],
+): Promise<{ raws: RawRecord[]; fromCache: boolean }> {
   const snap = await getDocs(query(collection(db, 'facilities', fid, 'visitRecords'), ...constraints));
-  return snap.docs.map((d) => ({ data: d.data(), pending: d.metadata.hasPendingWrites }));
+  return {
+    raws: snap.docs.map((d) => ({ data: d.data(), pending: d.metadata.hasPendingWrites })),
+    fromCache: snap.metadata.fromCache,
+  };
 }
 
 export const firestoreAdapter: DataAdapter = {
@@ -438,7 +443,8 @@ export const firestoreAdapter: DataAdapter = {
     const constraints: QueryConstraint[] = [where('date', '==', date)];
     if (staffId !== undefined) constraints.push(where('staffId', '==', staffId));
     try {
-      return splitRecords(await fetchRecords(me.facilityId, constraints));
+      const { raws, fromCache } = await fetchRecords(me.facilityId, constraints);
+      return { ...splitRecords(raws), fromCache };
     } catch (e) {
       throw wrap(e, '記録を読み込めませんでした。');
     }
@@ -501,7 +507,7 @@ export const firestoreAdapter: DataAdapter = {
         getDocs(query(collection(db, 'facilities', me.facilityId, 'dispatches'), ...dispatchConstraints)),
         fetchRecords(me.facilityId, recordConstraints),
       ]);
-      const { records, pendingVisitIds } = splitRecords(recordRaws);
+      const { records, pendingVisitIds } = splitRecords(recordRaws.raws);
       const pending = new Set(pendingVisitIds);
 
       const rows: VisitRow[] = [];
@@ -555,7 +561,7 @@ export const firestoreAdapter: DataAdapter = {
           where('date', '<=', today),
         ]),
       ]);
-      const { records } = splitRecords(recordRaws);
+      const { records } = splitRecords(recordRaws.raws);
 
       let todo = 0;
       for (const d of dispatchSnap.docs) {

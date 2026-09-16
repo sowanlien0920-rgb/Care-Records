@@ -52,6 +52,21 @@ export interface RecordListing {
   /** 読み出せなかった記録。visitId が読めない場合は null が入る */
   unreadable: Array<{ visitId: string | null; reason: string }>;
   /**
+   * この一覧が端末のキャッシュから返ってきたか。
+   *
+   * **圏外でも一覧は返る。** Firestore の永続キャッシュが前に読んだ内容を返すため、
+   * 日付を切り替えても「その日の記録はこれです」と平然と出る。実際には
+   * その端末が最後に通信できた時点の内容でしかなく、他の職員がその後に
+   * 付けた記録は入っていない。**古いと分からないまま見えるのが危うい**ので、
+   * 画面が「これは最新ではないかもしれない」と出せるようにする。
+   *
+   * `pendingVisitIds` と同じく carerecords の端末の事情であり、
+   * kpi-react と共有する契約（`types/contract.ts`）には混ぜない。
+   * `localStorage` 実装では常に false になる（キャッシュという段階が無い）。
+   */
+  fromCache: boolean;
+
+  /**
    * まだ端末から送られていない記録の visitId（Phase 5b）。
    *
    * **`VisitRecord` には持たせない。** あちらは kpi-react と共有する契約

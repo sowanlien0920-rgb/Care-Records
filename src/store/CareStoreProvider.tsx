@@ -469,7 +469,7 @@ function CareStore({
   );
   const records = useMemo<Async<RecordListing>>(
     () => (staffId === null
-      ? { status: 'ready', data: { records: [], unreadable: [], pendingVisitIds: [] } }
+      ? { status: 'ready', data: { records: [], unreadable: [], pendingVisitIds: [], fromCache: false } }
       : resolve(recordsKeyed, scopedKey)),
     [staffId, recordsKeyed, scopedKey],
   );

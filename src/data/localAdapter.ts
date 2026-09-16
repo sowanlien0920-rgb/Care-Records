@@ -191,6 +191,8 @@ export const localAdapter: DataAdapter = {
       unreadable,
       // localStorage には「送信」という段階が無い。書けた時点で保存は終わっている
       pendingVisitIds: [],
+      // localStorage にキャッシュという段階は無い。読めたものが常に最新になる
+      fromCache: false,
     };
   },
 

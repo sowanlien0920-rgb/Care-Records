@@ -105,6 +105,19 @@ export function VisitList() {
           端末をポケットに入れている間に消え、記録が消えたことが伝わらない。
           .warnbox は legacy の既存クラス（styles.css:291）で、CSS は足していない。
         */}
+        {/*
+          この一覧がキャッシュから返っているときの断り（1b）。
+          **閉じられるようにしない。** 圏外である間ずっと成り立つ事実で、
+          閉じられると「古いかもしれない」という前提だけが消える。
+          電波が戻って読み直せば、この行は自然に消える。
+        */}
+        {records.status === 'ready' && records.data.fromCache && (
+          <div className="warnbox" style={{ marginBottom: 10 }}>
+            電波が届いていないため、この端末に残っている内容を表示しています。
+            ほかの職員があとから付けた記録は含まれていません。
+          </div>
+        )}
+
         {alerts.map((message, i) => (
           <div className="warnbox" style={{ marginBottom: 10 }} key={message}>
             {message}

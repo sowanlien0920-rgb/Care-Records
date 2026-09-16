@@ -124,6 +124,13 @@ async function main(): Promise<void> {
     });
 
     await db.doc(`facilities/${fid}/staffs/${staff.staffId}`).set({
+      /*
+       * kpi-react は doc ID を `.id` に写さず、ドキュメント自身の `id` を読む
+       * （useFirestore.js の staffs 購読が `d.data()` だけを渡している）。
+       * これが無いと発行 UI が staffId を取れず、アカウントを発行できない。
+       * 本番の職員レコードは `id` を持っているので、seed も同じ形にする。
+       */
+      id: staff.staffId,
       name: staff.name,
       role: staff.role,
     }, { merge: true });

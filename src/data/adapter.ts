@@ -186,4 +186,20 @@ export interface DataAdapter {
    * 無いので常に即解決になる。
    */
   waitForPendingWrites(): Promise<void>;
+
+  /**
+   * 前回のセッションで送りきれなかった書き込みの答え合わせをする。
+   *
+   * **`waitForPendingWrites()` では足りない。** 圏外で保存 → アプリを閉じる →
+   * 翌朝の起動で SDK が再送 → 権限拒否、の経路では、書き込みの失敗を受け取る
+   * `.catch` を付けた主体がもう居ない。Firestore はローカルの書き込みを
+   * 黙って巻き戻すため、**職員には「保存したはずの記録が消えた」としか見えない**。
+   * 記録は法定文書であり、消えたことに気づけない状態を残さない。
+   *
+   * ログインが済んだあとに1度だけ呼ぶ。巻き戻りが見つかれば
+   * `onWriteFailure` と同じ経路で画面に出す。
+   *
+   * `localStorage` 実装は送信という段階が無いので何もしない。
+   */
+  reconcileOutbox(): Promise<void>;
 }

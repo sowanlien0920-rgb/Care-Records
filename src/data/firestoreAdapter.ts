@@ -130,6 +130,69 @@ export function onWriteFailure(handler: WriteFailureHandler | null): void {
   writeFailureHandler = handler;
 }
 
+/*
+ * ── 送信中の控え（outbox） ──────────────────────────────
+ *
+ * 圏外で保存すると、書き込みは端末に入った時点で成功として返る。サーバーが
+ * 見るのはその何秒も後、電波が戻ってからで、**アプリを閉じていれば翌朝になる**。
+ * そこで権限拒否などが返ると Firestore はローカルの書き込みを巻き戻すが、
+ * `writeInBackground` の `.catch` を持っていた主体はもう居ない。
+ *
+ * だから「何を投げたか」を端末に残し、次の起動で答え合わせをする。
+ * **記録の中身は持たない。** 判定に要るのは visitId と、その書き込みが載せた
+ * updatedAt だけで、特記事項やバイタルを二重に置く理由が無い。
+ */
+const OUTBOX_KEY = 'carerecords.outbox.v1';
+/** 控えの上限。突き合わせ前に閉じられると残るため、際限なく増やさない */
+const OUTBOX_MAX = 200;
+
+type OutboxEntry = {
+  visitId: string;
+  kind: 'save' | 'delete';
+  /** 'save' のとき、その書き込みが載せた updatedAt。'delete' では空文字 */
+  updatedAt: string;
+};
+
+function readOutbox(): OutboxEntry[] {
+  try {
+    const raw = localStorage.getItem(OUTBOX_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((e): e is OutboxEntry =>
+      typeof e === 'object' && e !== null
+      && typeof (e as OutboxEntry).visitId === 'string'
+      && ((e as OutboxEntry).kind === 'save' || (e as OutboxEntry).kind === 'delete'));
+  } catch {
+    // 控えは記録そのものではない。読めなければ捨てて先へ進む
+    return [];
+  }
+}
+
+function writeOutbox(entries: OutboxEntry[]): void {
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(entries.slice(-OUTBOX_MAX)));
+  } catch {
+    /*
+     * プライベートブラウズや容量超過で書けないことがある。ここで投げると
+     * 訪問先での保存そのものを失わせることになるので、黙って諦める。
+     * その端末では圏外保存自体が成立しない旨を別途出している
+     * （CareStoreProvider の IndexedDB の警告）。
+     */
+  }
+}
+
+function rememberOutbox(entry: OutboxEntry): void {
+  const next = readOutbox().filter(
+    (e) => !(e.visitId === entry.visitId && e.kind === entry.kind));
+  next.push(entry);
+  writeOutbox(next);
+}
+
+function forgetOutbox(visitId: string, kind: OutboxEntry['kind']): void {
+  writeOutbox(readOutbox().filter((e) => !(e.visitId === visitId && e.kind === kind)));
+}
+
 /**
  * 端末に書けた時点で成功として返し、サーバー確定は待たない。
  *
@@ -142,18 +205,26 @@ export function onWriteFailure(handler: WriteFailureHandler | null): void {
  */
 function writeInBackground(
   run: () => Promise<void>, userMessage: string, failureMessage: string,
+  /** 控えを持つ書き込みのときだけ渡す。成否が判明した時点で消す */
+  outbox?: OutboxEntry,
 ): void {
   let pending: Promise<void>;
   try {
     pending = run();
   } catch (e) {
+    if (outbox) forgetOutbox(outbox.visitId, outbox.kind);
     throw wrap(e, userMessage);
   }
-  pending.catch((e: unknown) => {
-    const err = wrap(e, userMessage);
-    console.error('[carerecords] 送信できませんでした', err);
-    writeFailureHandler?.(`${failureMessage}（${err.userMessage}）`);
-  });
+  pending.then(
+    () => { if (outbox) forgetOutbox(outbox.visitId, outbox.kind); },
+    (e: unknown) => {
+      // このセッションで失敗が判明したなら、次の起動で見直す必要は無い
+      if (outbox) forgetOutbox(outbox.visitId, outbox.kind);
+      const err = wrap(e, userMessage);
+      console.error('[carerecords] 送信できませんでした', err);
+      writeFailureHandler?.(`${failureMessage}（${err.userMessage}）`);
+    },
+  );
 }
 
 /*
@@ -380,6 +451,11 @@ export const firestoreAdapter: DataAdapter = {
       throw new AdapterError('contract', '記録の内容が正しくありません。入力を確認してください。',
         parsed.violation.kind === 'shape' ? parsed.violation.message : 'schemaVersion 不一致');
     }
+    const entry: OutboxEntry = {
+      visitId: parsed.value.visitId, kind: 'save', updatedAt: parsed.value.updatedAt,
+    };
+    // 投げる前に残す。投げたあとだと、その隙にアプリを閉じられたとき控えが無い
+    rememberOutbox(entry);
     writeInBackground(
       () => setDoc(
         doc(db, 'facilities', me.facilityId, 'visitRecords', parsed.value.visitId),
@@ -387,15 +463,19 @@ export const firestoreAdapter: DataAdapter = {
       ),
       '記録を保存できませんでした。',
       '記録を送信できませんでした。もう一度保存してください。',
+      entry,
     );
   },
 
   async deleteRecord(visitId: string): Promise<void> {
     const me = await requireProfile();
+    const entry: OutboxEntry = { visitId, kind: 'delete', updatedAt: '' };
+    rememberOutbox(entry);
     writeInBackground(
       () => deleteDoc(doc(db, 'facilities', me.facilityId, 'visitRecords', visitId)),
       '記録を削除できませんでした。',
       '記録の削除を送信できませんでした。もう一度お試しください。',
+      entry,
     );
   },
 
@@ -575,5 +655,75 @@ export const firestoreAdapter: DataAdapter = {
    */
   waitForPendingWrites(): Promise<void> {
     return waitForPendingWrites(db);
+  },
+
+  /**
+   * 前回のセッションで送りきれなかった書き込みの答え合わせをする（`adapter.ts` の注記）。
+   *
+   * `waitForPendingWrites()` が解決するまで待ってから、控えの1件ずつを
+   * サーバーの実物と突き合わせる。**待たずに読むと、まだ送っていないものを
+   * 「消えた」と誤判定する。**
+   *
+   * 断定はしない。別の端末が同じ記録を後から更新すれば `updatedAt` は変わるので、
+   * 巻き戻っていなくてもここへ来うる。文言は「確認できませんでした」に寄せる。
+   */
+  async reconcileOutbox(): Promise<void> {
+    const entries = readOutbox();
+    if (entries.length === 0) return;
+
+    let me: Profile;
+    try {
+      me = await requireProfile();
+    } catch {
+      // ログインが切れているなら答え合わせはできない。控えは次の機会まで残す
+      return;
+    }
+
+    try {
+      await waitForPendingWrites(db);
+    } catch {
+      // 職員が入れ替わると reject する（SDK の仕様）。次の起動でやり直す
+      return;
+    }
+
+    const lost: string[] = [];
+    for (const entry of entries) {
+      let snap;
+      try {
+        snap = await getDoc(doc(db, 'facilities', me.facilityId, 'visitRecords', entry.visitId));
+      } catch (e) {
+        const err = wrap(e, '');
+        /*
+         * 通信できないだけなら判定しない。控えを残し、次の起動でやり直す。
+         */
+        if (err.kind === 'network') continue;
+        /*
+         * 権限で弾かれたものは**「消えた」と区別が付かない**。
+         * ルールはヘルパーに `resource.data.staffId == myStaffId()` を課すため、
+         * 記録が巻き戻って存在しなくなると `resource` が null になり、
+         * 読み取り自体が拒否される（kpi-react の firestore.rules の visitRecords）。
+         * 記録は法定文書なので、判定が付かないものは職員に確認してもらう側へ倒す。
+         */
+        lost.push(entry.visitId);
+        forgetOutbox(entry.visitId, entry.kind);
+        continue;
+      }
+      const rolledBack = entry.kind === 'save'
+        ? (!snap.exists() || snap.get('updatedAt') !== entry.updatedAt)
+        : snap.exists();
+      if (rolledBack) lost.push(entry.visitId);
+      forgetOutbox(entry.visitId, entry.kind);
+    }
+
+    if (lost.length === 0) return;
+    console.error('[carerecords] 前回の送信を確認できませんでした', lost);
+    /*
+     * 保存と削除の両方が混ざりうるので、どちらとも取れる言い方にする。
+     * 断定もしない（別の端末が後から更新しても updatedAt は変わるため）。
+     */
+    writeFailureHandler?.(
+      `前回この端末で行った記録の変更${lost.length}件が、送信できたか確認できませんでした。`
+      + 'お手数ですが、該当の記録をご確認ください。',
+    );
   },
 };

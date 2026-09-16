@@ -318,6 +318,14 @@ export const localAdapter: DataAdapter = {
   async waitForPendingWrites(): Promise<void> {
     // 何もしない
   },
+
+  /**
+   * 送信という段階が無いので、送りきれなかった書き込みも存在しない。
+   * 控え（outbox）ごと持たない。
+   */
+  async reconcileOutbox(): Promise<void> {
+    // 何もしない
+  },
 };
 
 export { KEY as LOCAL_STORAGE_KEYS };

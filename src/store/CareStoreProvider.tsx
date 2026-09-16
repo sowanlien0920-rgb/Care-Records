@@ -286,6 +286,22 @@ function CareStore({
   }, [adapter, staffKey, signedIn]);
 
   /*
+   * 前回のセッションで送りきれなかった書き込みの答え合わせ（`adapter.ts` の
+   * `reconcileOutbox` の注記）。
+   *
+   * ログインが済んでから1度だけ走らせる。`onWriteFailure` の登録より後に
+   * 呼ばれる必要があるが、effect の並び順ではなく `signedIn` の変化で決まるため、
+   * 登録側（下の effect）は同じ描画で先に走る。
+   *
+   * 失敗しても握り潰してよい。**答え合わせができなかっただけで、記録は動かない。**
+   * 控えは消していないので、次の起動でやり直される。
+   */
+  useEffect(() => {
+    if (!signedIn) return;
+    void adapter.reconcileOutbox().catch(() => { /* 次の起動でやり直す */ });
+  }, [adapter, signedIn]);
+
+  /*
    * 送信できなかった書き込みを職員に伝える（Phase 5b）。
    *
    * 圏外での保存は端末に入った時点で成功として返るため、権限拒否などは

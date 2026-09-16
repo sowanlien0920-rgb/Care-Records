@@ -105,4 +105,6 @@ kpi-react のソースを変更してよい。計画書は
 `../kpi-react/docs/plans/2026-09-14-helper-account-phase3.md`。
 Phase 4（配信ドキュメント生成）も同様に解除した（2026-09-14）。計画書は
 `../kpi-react/docs/plans/2026-09-14-dispatch-generation-phase4.md`。
-この例外は Phase 3・4 の範囲に閉じる。それ以外は従来どおり読み取りのみ。
+Phase 6（承認済み実施記録の取り込み）も解除した（2026-09-14）。計画書は
+`docs/plans/2026-09-14-carerecords-phase6-record-import.md`。
+この例外は Phase 3・4・6 の範囲に閉じる。それ以外は従来どおり読み取りのみ。

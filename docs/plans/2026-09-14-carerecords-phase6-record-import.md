@@ -107,9 +107,10 @@ Phase 6 の内容は、移行計画で一度縮小されている。
 - [ ] **U-8. キャンセルはどちらを正とするか。** 契約は配信側（`DispatchVisit.cancelled`）を
       正と定めている（`src/types/contract.ts:101-105`）。取り込みもこれに従う想定だが、
       `VisitRecord.status` の `'キャンセル'` とずれた場合の扱いが未定義
-- [ ] **U-11. 本番の `serviceRecords` に既存データがあるか。** 書き込み経路が
-      2026-07-28 の導入時から存在しないため空と見ているが、**本番未接続で未確認**。
-      作り直す前に確認が要る（手動投入・旧実装の残骸の可能性）
+- [x] **U-11. 本番の `serviceRecords` に既存データがあるか。** 書き込み経路が
+      2026-07-28 の導入時から存在しないため空と見ていた。**2026-09-17 に確認した結果、
+      空ではなかった**（`## 6` の「U-11 の確認結果」）。`koharunosato` に 2026-06 の
+      43件が氏名ベースの doc ID で残っている
 - [ ] **U-12. 承認者を区別できない施設をどうするか。** `nanairo` の施設アカウント3件が
       同じ `staffId` を共有している（Phase 3 の残課題）。承認済み実績を取り込む以上、
       「誰が承認したか」は法定要件として問われる
@@ -452,7 +453,7 @@ facilities/{fid}/serviceRecords/{targetMonth}_{residentId}
 
 ## 5. Implementation Status
 
-- [ ] **ステップ1. U-11 を確認する** — **未了。実行できなかった**（下記）
+- [x] **ステップ1. U-11 を確認する** — **2026-09-17 に実行した**（`## 6` の「U-11 の確認結果」）
 - [x] ステップ2. `serviceRecordImport.js`（純粋関数）を作る
 - [x] ステップ3. `useFirestore.js` に読み書きを足す
 - [x] ステップ4. `BenefitPage` に「実施記録の取り込み」サブタブを足す
@@ -640,7 +641,51 @@ carerecords `localhost:5174` / kpi-react `localhost:5175`（`VITE_USE_EMULATOR=1
 - [ ] **`writeBatch` の分割（500件超）** — **未検証**。1施設・1か月で500件を超える
       利用者数を用意できていない
 - [ ] **権限拒否時のエラー表示** — **未検証**。`isKpiUser` 以外で取り込みを試していない
-- [ ] **本番の `serviceRecords` が空か（U-11）** — **未検証**。本番読み取りが許可されていない
+- [x] **本番の `serviceRecords` が空か（U-11）** — **確認した（2026-09-17）。空ではない**
+
+### U-11 の確認結果（2026-09-17）
+
+本番（`kpi-system-a718f`）を Admin SDK の読み取り専用スクリプトで確認した。
+
+**確認したパスの訂正。** `serviceRecords` はトップレベルではなく
+`facilities/{facilityId}/serviceRecords` である（`useFirestore.js:244`）。
+トップレベルの `serviceRecords` は存在せず、最初にそちらを見て「空」と誤認した。
+
+| | |
+|---|---|
+| 存在する施設 | `koharunosato`（小春の里）のみ。他16施設は0件 |
+| 件数 | 43件。すべて `targetMonth: '2026-06'` |
+| doc ID | `2026-06_三尾義彦` のように**氏名ベース**。`residentId` は43件とも**無い** |
+| `schemaVersion` | **無い**（Phase 6 以前の書き込み） |
+| 持っているフィールド | `id` / `targetMonth` / `residentName` / `kpiName` / `careLevel` / `limitUnits` / `services[{name,planned,actual}]` / `updatedAt` |
+| 同月の `benefits` | 41件（2026-06） |
+
+**移行は要らない。ただし 2026-06 を取り込んではいけない。**
+`saveServiceRecords` は `targetMonth == month` の既存ドキュメントを取り直し、
+`keep`（`${month}_${residentId}` の集合）に無いものを削除する。旧43件は ID の形が
+違うため必ず `keep` から外れ、**2026-06 を取り込んだ瞬間に43件とも削除される**。
+そして実施記録は本番に0件なので、いま取り込むと `records` が空 = 新しい行は1件も
+作られず、**43件が消えて0件になる**。`window.confirm` は挟んであるが、
+取り込み UI は既に本番に出ており、この状態で誰かが 2026-06 を選べば起きる。
+
+旧43件が持つ `kpiName` と `limitUnits` は新形式には無い。ただしこの2つを読む画面は
+無く（`limitUnits` は `CARE_LEVEL_LIMITS` から再計算、`kpiName` は未参照）、
+失われて困るのは `services[].planned` / `actual` の実績そのものである。
+
+**控えを取った（2026-09-17）。** 43件を JSON に書き出し、件数と doc ID の一致を
+読み直して照合した。`services[].actual` の合計は 3,865。
+
+```
+/Users/shimazaki/Desktop/Projects_Web/_backups/serviceRecords-koharunosato-2026-09-17.json
+```
+
+両リポジトリの外に置いてある（`Projects_Web/` は git 管理下ではない）。
+利用者氏名を含むため、リポジトリに入れないこと。
+
+**打ち手**: 2026-06 を取り込む必要が出るまでは触らない。`residentName` から
+`residentId` を引いて新形式へ書き換える移行も可能だが、**その月の実施記録が
+carerecords 側に無い以上、移行しても取り込みで消える**ため、移行の意味があるのは
+実施記録が貯まってからである。
 
 ### 失敗: その月の対象が0件になると幽霊が残る
 
@@ -751,9 +796,9 @@ carerecords `localhost:5174` / kpi-react `localhost:5175`（`VITE_USE_EMULATOR=1
 
 ### リリース前に必ずやること
 
-- **U-11。本番の `serviceRecords` が空かを確認する。** 空でなければ
-  `migrating-database` へ回す（doc ID を氏名基準から `residentId` 基準へ変えたため）。
-  読み取り専用スクリプトは用意済みだが、本番読み取りの許可が下りていない
+- **U-11。確認済み（2026-09-17）。空ではなかった。** `koharunosato` に 2026-06 の43件が
+  氏名ベースの doc ID で残っている（`## 6` の「U-11 の確認結果」）。移行は不要だが、
+  **2026-06 を取り込むと43件が削除される**。実施記録が貯まるまでこの月に触らないこと
 - Phase 5a・5b が残した本番接続時の確認（App Check・複合インデックス・実データの形・
   スマホ実機・IndexedDB 不可端末の警告）
 

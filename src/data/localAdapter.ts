@@ -8,7 +8,7 @@
  * には触れない。移行対象の実データは存在しないと確認済みのため、
  * 新しいキーで独立して開始する。
  */
-import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from './adapter';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitRowListing, type VisitScope } from './adapter';
 import { MOCK_STAFF, mockDispatch, mockDispatchDates, mockSeedRecords } from './mock';
 import { parseDispatch, parseVisitRecord, type Dispatch, type VisitRecord } from '../types/contract';
 import {
@@ -209,7 +209,7 @@ export const localAdapter: DataAdapter = {
     writeRaw(KEY.records, [...next, ...unreadableRaw]);
   },
 
-  async listVisitRows(scope: VisitScope, range): Promise<VisitRow[]> {
+  async listVisitRows(scope: VisitScope, range): Promise<VisitRowListing> {
     const { records } = readRecords();
     const rows: VisitRow[] = [];
     for (const date of mockDispatchDates()) {
@@ -234,7 +234,8 @@ export const localAdapter: DataAdapter = {
         }
       }
     }
-    return rows;
+    // localStorage にキャッシュという段階は無い。読めた内容が常に最新になる
+    return { rows, fromCache: false };
   },
 
   async deleteRecord(visitId: string): Promise<void> {

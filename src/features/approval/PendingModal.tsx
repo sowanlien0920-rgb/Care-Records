@@ -24,6 +24,7 @@ import { minutesOf } from '../../domain/aggregate';
 import { downloadCsv, toCsv } from '../../utils/csv';
 import { iso } from '../../utils/date';
 import type { VisitRow } from '../../data/adapter';
+import { StaleListNotice } from '../../components/StaleListNotice';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
@@ -51,7 +52,7 @@ export function PendingModal() {
 
   if (panel !== 'pending') return null;
 
-  const all = visitRows.status === 'ready' ? visitRows.data : [];
+  const all = visitRows.status === 'ready' ? visitRows.data.rows : [];
   const accounts = staff.status === 'ready' ? staff.data : [];
 
   // legacy/index.html:3462。完了とキャンセルを除いたものが母集団
@@ -229,6 +230,7 @@ export function PendingModal() {
 
       <div className="sec">
         <h3>対象一覧 <span className="bchip">{list.length}件</span></h3>
+        <StaleListNotice show={visitRows.status === 'ready' && visitRows.data.fromCache} />
         <div className="pend-head">
           <span><input type="checkbox" title="すべて選択"
             checked={selectable.length > 0 && selected.size === selectable.length}

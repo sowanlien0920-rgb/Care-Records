@@ -26,6 +26,7 @@ import { generateNote } from '../../domain/noteBuilder';
 import { useSpeechInput, SPEECH_UNSUPPORTED_HINT } from '../../hooks/useSpeechInput';
 import { MOOD_DEFAULT, MOOD_OPTIONS } from '../../domain/vocabulary';
 import { iso } from '../../utils/date';
+import { StaleListNotice } from '../../components/StaleListNotice';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
 const LABEL = ['未着手', '対応中', '記録未完成'] as const;
@@ -60,7 +61,7 @@ export function TodoModal() {
 
   if (panel !== 'todo') return null;
 
-  const all = visitRows.status === 'ready' ? visitRows.data : [];
+  const all = visitRows.status === 'ready' ? visitRows.data.rows : [];
   const today = iso(new Date());
   // legacy/index.html:3349-3350。サ責以外は自分固定
   const effScope = sup ? scope : 'me';
@@ -183,6 +184,7 @@ export function TodoModal() {
 
       <div className="sec">
         <h3>対象一覧 <span className="bchip">{list.length}件</span></h3>
+        <StaleListNotice show={visitRows.status === 'ready' && visitRows.data.fromCache} />
         <div className="todo-head">
           <span>サービス提供日</span><span>時間</span><span>利用者／サービス</span>
           <span>担当職員</span><span>状態</span><span style={{ textAlign: 'right' }}>操作</span>

@@ -14,7 +14,7 @@
  * 条件が変わった直後に前の条件の結果が一瞬見えることもある。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRow, type VisitScope } from '../data/adapter';
+import { AdapterError, type BadgeCounts, type DataAdapter, type RecordListing, type VisitRowListing, type VisitScope } from '../data/adapter';
 import { CareStoreContext, type Async, type CareStore, type PanelKind, type RecordFieldPatch } from './context';
 import { clearProfileCache, firestoreAdapter, onWriteFailure } from '../data/firestoreAdapter';
 import { auth, BACKEND, offlineStorageAvailable } from '../firebase';
@@ -195,7 +195,7 @@ function CareStore({
   const [dispatchKeyed, setDispatchKeyed] = useState<Keyed<Dispatch | null> | null>(null);
   const [recordsKeyed, setRecordsKeyed] = useState<Keyed<RecordListing> | null>(null);
   const [badgesKeyed, setBadgesKeyed] = useState<Keyed<BadgeCounts> | null>(null);
-  const [rowsKeyed, setRowsKeyed] = useState<Keyed<VisitRow[]> | null>(null);
+  const [rowsKeyed, setRowsKeyed] = useState<Keyed<VisitRowListing> | null>(null);
 
   const [notification, setNotification] = useState<string | null>(null);
   // 通知を連続で出したとき、前のタイマーが後の通知を早期に消さないようにする。
@@ -459,8 +459,10 @@ function CareStore({
   // 職員未選択のときは取得そのものが起きないので、待たせずに空を返す。
   // 毎描画で新しいオブジェクトを作ると Context の値が変わり全体が再描画されるため memo する。
   const incidents = useMemo(() => resolve(incidentsKeyed, staffKey), [incidentsKeyed, staffKey]);
-  const visitRows = useMemo<Async<VisitRow[]>>(
-    () => (rowScope === null ? { status: 'ready', data: [] } : resolve(rowsKeyed, rowsKey)),
+  const visitRows = useMemo<Async<VisitRowListing>>(
+    () => (rowScope === null
+      ? { status: 'ready', data: { rows: [], fromCache: false } }
+      : resolve(rowsKeyed, rowsKey)),
     [rowScope, rowsKeyed, rowsKey],
   );
   const dispatch = useMemo<Async<Dispatch | null>>(
@@ -495,7 +497,7 @@ function CareStore({
   const pendingSignature = [
     ...(records.status === 'ready' ? records.data.pendingVisitIds : []),
     ...(visitRows.status === 'ready'
-      ? visitRows.data.filter((r) => r.pending).map((r) => r.visit.visitId)
+      ? visitRows.data.rows.filter((r) => r.pending).map((r) => r.visit.visitId)
       : []),
   ].sort().join(',');
   /** 待って取り直した顔ぶれ。同じものが残ったときに待ち直さないために持つ */
@@ -555,7 +557,7 @@ function CareStore({
   const recordExists = useCallback((visitId: string): boolean => {
     if (records.status === 'ready' && records.data.records.some((r) => r.visitId === visitId)) return true;
     return visitRows.status === 'ready'
-      && visitRows.data.some((r) => r.visit.visitId === visitId && r.record !== undefined);
+      && visitRows.data.rows.some((r) => r.visit.visitId === visitId && r.record !== undefined);
   }, [records, visitRows]);
 
   const saveRecord = useCallback(async (
@@ -605,7 +607,7 @@ function CareStore({
       };
     }
     const row = visitRows.status === 'ready'
-      ? visitRows.data.find((r) => r.visit.visitId === visitId)
+      ? visitRows.data.rows.find((r) => r.visit.visitId === visitId)
       : undefined;
     if (row === undefined) return null;
     return {

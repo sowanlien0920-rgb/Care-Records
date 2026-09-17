@@ -45,7 +45,7 @@ export function IncidentModal() {
   const residents = useMemo(() => {
     const map = new Map<string, string>();
     if (visitRows.status === 'ready') {
-      for (const r of visitRows.data) {
+      for (const r of visitRows.data.rows) {
         if (r.resident !== undefined) map.set(r.resident.residentId, r.resident.name);
       }
     }

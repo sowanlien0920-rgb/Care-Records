@@ -3,7 +3,7 @@
  * Provider コンポーネントと同じファイルに置くと Fast Refresh が効かなくなるため分けている。
  */
 import { createContext } from 'react';
-import type { AdapterError, BadgeCounts, RecordListing, VisitRow } from '../data/adapter';
+import type { AdapterError, BadgeCounts, RecordListing, VisitRowListing } from '../data/adapter';
 import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
 import type { Incident, RecordPrefs, StaffAccount } from '../types/local';
 
@@ -113,8 +113,11 @@ export interface CareStore {
   records: Async<RecordListing>;
   /** ツールバーのバッジ件数 */
   badges: Async<BadgeCounts>;
-  /** 日付・職員をまたぐ訪問と記録の一覧。未承認一覧・未完了・帳票・経過記録が使う */
-  visitRows: Async<VisitRow[]>;
+  /**
+   * 日付・職員をまたぐ訪問と記録の一覧。未承認一覧・未完了・帳票・経過記録が使う。
+   * `records` と同じく、行と「キャッシュ由来か」を一組で返す。
+   */
+  visitRows: Async<VisitRowListing>;
 
   // ── 操作 ──────────────────────────────────────────────
   saveRecord: (record: VisitRecord) => Promise<boolean>;

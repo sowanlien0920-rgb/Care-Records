@@ -23,7 +23,7 @@ export function TimelineModal() {
 
   if (panel !== 'timeline') return null;
 
-  const all = visitRows.status === 'ready' ? visitRows.data : [];
+  const all = visitRows.status === 'ready' ? visitRows.data.rows : [];
   const residents = [...new Map(all.filter((r) => r.resident !== undefined)
     .map((r) => [r.resident?.residentId ?? '', r.resident?.name ?? ''])).entries()];
   const cur = residentId || residents[0]?.[0] || '';

@@ -55,7 +55,7 @@ import { z } from 'zod';
 import { auth, db } from '../firebase';
 import {
   AdapterError, type BadgeCounts, type DataAdapter, type RecordListing,
-  type VisitRow, type VisitScope,
+  type VisitRow, type VisitRowListing, type VisitScope,
 } from './adapter';
 import { parseDispatch, parseVisitRecord, type Dispatch, type VisitRecord } from '../types/contract';
 import {
@@ -485,7 +485,7 @@ export const firestoreAdapter: DataAdapter = {
     );
   },
 
-  async listVisitRows(scope: VisitScope, range): Promise<VisitRow[]> {
+  async listVisitRows(scope: VisitScope, range): Promise<VisitRowListing> {
     const me = await requireProfile();
     const dispatchConstraints: QueryConstraint[] = [];
     const recordConstraints: QueryConstraint[] = [];
@@ -529,7 +529,12 @@ export const firestoreAdapter: DataAdapter = {
           });
         }
       }
-      return rows;
+      /*
+       * 配信と記録のどちらか一方でもキャッシュ由来なら、この一覧は古いかもしれない。
+       * 配信だけ新しくても、他の職員があとから付けた記録が入っていなければ
+       * 承認の判断は下せない。厳しい側に倒す。
+       */
+      return { rows, fromCache: dispatchSnap.metadata.fromCache || recordRaws.fromCache };
     } catch (e) {
       throw wrap(e, '一覧を読み込めませんでした。');
     }

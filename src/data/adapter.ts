@@ -79,6 +79,25 @@ export interface RecordListing {
 }
 
 /**
+ * 日付・職員をまたぐ一覧の読み出し結果。
+ *
+ * `RecordListing` と同じ形にしてある。**旗を別に持たせない。**
+ * 行と「古いかもしれない」が別々に更新されると、新しい行に古い旗、
+ * あるいはその逆の組み合わせが起こりうる。ひとつの取得結果に同梱すれば、
+ * 画面が見ている行とその出所は必ず一致する。
+ */
+export interface VisitRowListing {
+  rows: VisitRow[];
+  /**
+   * この一覧が端末のキャッシュから返ってきたか。意味は `RecordListing.fromCache` と同じ。
+   *
+   * ここは配信と実施記録の2つを読む。**どちらか一方でもキャッシュ由来なら true にする。**
+   * 配信が新しくても記録が古ければ、承認の判断材料としては古い。
+   */
+  fromCache: boolean;
+}
+
+/**
  * ツールバーのバッジ件数。
  *
  * 配信は 1日 × 1職員 で取るが、バッジは日付をまたいで数える必要があるため
@@ -173,7 +192,7 @@ export interface DataAdapter {
    * VisitScope のコメントのとおりで、`{ kind: 'all' }` は
    * サービス提供責任者以上、または承認権限を持つ職員でのみ成立する。
    */
-  listVisitRows(scope: VisitScope, range?: { from?: string; to?: string }): Promise<VisitRow[]>;
+  listVisitRows(scope: VisitScope, range?: { from?: string; to?: string }): Promise<VisitRowListing>;
 
   // ── 記録支援設定（carerecords 固有） ──────────────────────
   getPrefs(residentId: string): Promise<RecordPrefs>;

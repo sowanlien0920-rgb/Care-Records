@@ -23,6 +23,7 @@ import { generateNote } from '../../domain/noteBuilder';
 import { deriveStatus, newRecordFor } from '../../domain/visitStatus';
 import { blankRecordPrefs, isSupervisor, type RecordPrefs } from '../../types/local';
 import type { VisitRow } from '../../data/adapter';
+import { StaleListNotice } from '../../components/StaleListNotice';
 
 /** 1件ごとの進み具合。legacy の bState（:2803）と同じ4状態 */
 type RowState =
@@ -64,7 +65,7 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
   const abortRef = useRef(false);
 
   const effScope = sup ? scope : 'staff';
-  const rows = visitRows.status === 'ready' ? visitRows.data : [];
+  const rows = visitRows.status === 'ready' ? visitRows.data.rows : [];
   const staffName = staff.status === 'ready'
     ? staff.data.find((s) => s.staffId === staffId)?.name ?? ''
     : '';
@@ -215,6 +216,7 @@ export function BulkNoteModal({ onClose }: { onClose: () => void }) {
 
       <div className="sec">
         <h3>対象一覧 <span className="bchip" id="bCount">{shown.length}件</span></h3>
+        <StaleListNotice show={visitRows.status === 'ready' && visitRows.data.fromCache} />
         <div className="bprog"><div className="bar" id="bBar" style={{ width: `${pct}%` }}></div></div>
         <div className="plist" id="bList">
           {/*

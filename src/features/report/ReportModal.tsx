@@ -20,6 +20,7 @@ import { deriveStatus } from '../../domain/visitStatus';
 import { hm, minutesOf, staffReport, summaryReport, userReport } from '../../domain/aggregate';
 import { downloadCsv, toCsv } from '../../utils/csv';
 import type { VisitRow } from '../../data/adapter';
+import { StaleListNotice } from '../../components/StaleListNotice';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
@@ -37,7 +38,7 @@ export function ReportModal() {
 
   if (panel !== 'report') return null;
 
-  const all = visitRows.status === 'ready' ? visitRows.data : [];
+  const all = visitRows.status === 'ready' ? visitRows.data.rows : [];
   const accounts = staff.status === 'ready' ? staff.data : [];
   const residents = [...new Map(all.filter((r) => r.resident !== undefined)
     .map((r) => [r.resident?.residentId ?? '', r.resident])).entries()]
@@ -154,11 +155,20 @@ export function ReportModal() {
           </div>
         </div>
       ) : (
-        <div className="rep">
-          {type === 'user' && <UserReport rows={inMonth.filter((r) => r.resident?.residentId === curResident)} month={month} />}
-          {type === 'staff' && <StaffReport rows={inMonth.filter((r) => r.staffId === curStaff)} month={month} />}
-          {type === 'summary' && <SummaryReport rows={inMonth} month={month} />}
-        </div>
+        <>
+          {/*
+            * 帳票は請求突合に使う。圏外で開くと、この端末が最後に通信できた時点の
+            * 集計を「実績」として出してしまう。CSV に落とすと出所の情報が消えるため、
+            * 画面の側で必ず断る。**`.rep` の外に置く。** `.rep` は overflow:auto
+            * （styles.css:487）で、中に入れると表をスクロールした時点で断りが消える
+            */}
+          <StaleListNotice show={visitRows.data.fromCache} />
+          <div className="rep">
+            {type === 'user' && <UserReport rows={inMonth.filter((r) => r.resident?.residentId === curResident)} month={month} />}
+            {type === 'staff' && <StaffReport rows={inMonth.filter((r) => r.staffId === curStaff)} month={month} />}
+            {type === 'summary' && <SummaryReport rows={inMonth} month={month} />}
+          </div>
+        </>
       )}
     </Modal>
   );

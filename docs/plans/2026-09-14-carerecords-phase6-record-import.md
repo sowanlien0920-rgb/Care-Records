@@ -816,3 +816,30 @@ carerecords 側に無い以上、移行しても取り込みで消える**ため
   hook の戻り値で同じキーを二度書いており、実害の有無は未確認
 - **Phase 5b の持ち越し2件**（セッションをまたいだ再送失敗が無言で巻き戻る、
   キャッシュ由来の古い一覧を「最新」として出している）
+
+### 本番データでの試算（2026-09-17、取り込みは未実行）
+
+承認済みの実施記録が本番に1件できたので、`buildServiceRecords` /
+`compareWithBenefits` に**本番のデータをそのまま通して**、取り込みが何を作るかを
+書き込みなしで確かめた。
+
+```
+実施記録 1 件 / 利用者 28 名 / benefits 0 件 / 既存 serviceRecords 0 件
+
+[取り込まれる] 1 名
+  安藤　惠美子（1779844496894_27）  訪問1件 / 209 単位
+  services[0] = { serviceCode: '身体介護01・夜', serviceName: '身体介護',
+                  unitPrice: 209, count: 1, dates: ['2026-09-17'] }
+  sourceVisitIds = ['2026-09-17#1779844496894_27#imp_1084_vklri']
+  doc id = 2026-09_1779844496894_27
+
+[対象外] 0 件
+[請求との差分] importedUnits=209 / actualUnits=null（benefits が無いため）
+```
+
+単位数は `SERVICE_MASTER['身体介護01・夜'] = 209` と一致する。`sourceVisitIds` から
+元の実施記録まで辿れる。**doc id は `${month}_${residentId}` の新形式**である。
+
+**この取り込みは安全に実行できる。** `koharunosato` の 2026-06 で警告した事故
+（既存43件の削除）は別施設・別月の話であり、`cocolahineno` の `serviceRecords` は
+0件、同月の `benefits` も0件のため、消える対象が存在しない。

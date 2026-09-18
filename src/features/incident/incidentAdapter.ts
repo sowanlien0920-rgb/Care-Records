@@ -16,7 +16,8 @@ import { AdapterError } from '../../data/adapter';
 import { incidentSchema, type Incident } from '../../types/local';
 import { z } from 'zod';
 
-const KEY = 'carerecords.v2.incidents';
+export const INCIDENT_STORAGE_KEY = 'carerecords.v2.incidents';
+const KEY = INCIDENT_STORAGE_KEY;
 
 export interface IncidentAdapter {
   list(): Promise<Incident[]>;

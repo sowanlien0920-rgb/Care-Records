@@ -7,6 +7,9 @@
 import { CareStoreProvider } from './store/CareStoreProvider';
 import { useCareStore } from './store/useCareStore';
 import { StaffPicker } from './features/auth/StaffPicker';
+import { LoginForm } from './features/auth/LoginForm';
+import { PasswordModal } from './features/auth/PasswordModal';
+import { BACKEND } from './firebase';
 import { Header } from './features/shell/Header';
 import { DateBar } from './features/shell/DateBar';
 import { Toolbar } from './features/shell/Toolbar';
@@ -23,7 +26,12 @@ import { TimelineModal } from './features/timeline/TimelineModal';
 function Shell() {
   const { session, notification } = useCareStore();
 
-  if (session === null) return <StaffPicker />;
+  /*
+   * 未ログインのときに出すもの。
+   * Firestore では Firebase Auth のログインフォーム、localStorage では
+   * Phase 1a の簡易ログイン（職員を選ぶだけ）になる。
+   */
+  if (session === null) return BACKEND === 'firestore' ? <LoginForm /> : <StaffPicker />;
 
   return (
     <>
@@ -42,6 +50,8 @@ function Shell() {
       <ReportModal />
       <TimelineModal />
       <IncidentModal />
+      {/* 初期パスワードのままなら、ここが強制モードで開いて閉じられなくなる */}
+      <PasswordModal />
       {/* 通知は live region にする。トーストだけだと読み上げに乗らない */}
       {notification !== null && <div className="toast on" role="status" aria-live="polite">{notification}</div>}
     </>

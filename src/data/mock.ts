@@ -11,18 +11,22 @@
  */
 import { SCHEMA_VERSION, buildVisitRecord, type Dispatch, type DispatchVisit, type ResidentBrief, type ServiceKind, type VisitRecord } from '../types/contract';
 import type { StaffAccount } from '../types/local';
+import { SERVICE_OPTIONS, TASK_OPTIONS } from '../domain/vocabulary';
+
+/*
+ * 算定コードの見本。Phase 4 で kpi-react が SERVICE_MASTER のキーを入れる項目で、
+ * モックが実データと乖離すると Phase 5 の差し替えで UI 側の修正が発生する。
+ * 実在するキーを写しておく（kpi-react/src/constants.js の SERVICE_MASTER）。
+ */
+const MOCK_SERVICE_CODES: Record<ServiceKind, string> = {
+  身体介護: '身体介護1',
+  生活援助: '生活援助2',
+  '身体＋生活': '身体1生活1',
+  通院等乗降介助: '通院等乗降介助',
+};
 import { addDays, fmt, iso, nowMin, toMin } from '../utils/date';
 
 export const MOCK_FACILITY_ID = 'mock-facility';
-
-/** legacy/index.html:1640 の SERVICES と一致 */
-const SERVICES: ServiceKind[] = ['身体介護', '生活援助', '身体＋生活', '通院等乗降介助'];
-
-/** legacy/index.html:1641 の TASKS と一致 */
-const TASKS = [
-  '排泄介助', '食事介助', '入浴介助', '清拭・整容', '更衣介助', '服薬確認',
-  '体位変換', '移動・移乗', '調理', '掃除', '洗濯', '買い物', '見守り', '記録・連絡',
-];
 
 /**
  * 職員。kpi-react の staffs は Date.now() ベースの安定 ID を持つため、
@@ -168,10 +172,13 @@ export function mockDispatch(date: string, staffId: string): Dispatch | null {
     if (!resident) break;
     usedResidents.add(resident.residentId);
 
+    const serviceName = SERVICE_OPTIONS[i % SERVICE_OPTIONS.length] ?? '身体介護';
     visits.push({
       visitId: `${date}-${staff.staffId}-${String(i).padStart(2, '0')}`,
       residentId: resident.residentId,
-      serviceName: SERVICES[i % SERVICES.length] ?? '身体介護',
+      serviceName,
+      // Phase 4 で kpi-react が入れる算定コードの見本。SERVICE_MASTER のキーを写す
+      serviceCode: MOCK_SERVICE_CODES[serviceName],
       startTime: fmt(clock),
       endTime: fmt(clock + dur),
       officeName: 'そわん訪問介護事業所',
@@ -246,15 +253,19 @@ export function mockSeedRecords(): VisitRecord[] {
           staffId: staff.staffId,
           residentId: v.residentId,
           serviceName: v.serviceName,
+          serviceCode: v.serviceCode,
           plannedStart: v.startTime,
           plannedEnd: v.endTime,
           actualStart: fmt(start),
           actualEnd: fmt(end),
-          tasks: TASKS.slice(0, 3),
+          tasks: [...TASK_OPTIONS.slice(0, 3)],
           vitals: { temperature: '', bloodPressure: '', pulse: '' },
           // legacy の seed も特記事項を空にしている。記載チェックの対象になる
           note: '',
           noteSource: null,
+          // legacy の seed も mood / memo を持たない（:1687-1691）
+          mood: '',
+          memo: '',
           status: approved ? '完了' : '済',
           staffName: staff.name,
           carePlanVersion: 1,
@@ -281,5 +292,3 @@ export function isPastVisit(date: string, endTime: string): boolean {
   const m = end[1] ?? 0;
   return h * 60 + m < nowMin() - 5;
 }
-
-export { TASKS as MOCK_TASKS };

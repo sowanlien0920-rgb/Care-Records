@@ -9,8 +9,12 @@
  * - CSV も絞り込みを無視して全状態を出す（:1833）
  * - 0件の文言は絞り込みの有無で変わらない（:1747）
  */
+import { useState } from 'react';
 import { useCareStore } from '../../store/useCareStore';
+import { BulkNoteModal } from './BulkNoteModal';
 import { deriveStatus, recordOf } from '../../domain/visitStatus';
+import { minutesOf } from '../../domain/aggregate';
+import { downloadCsv, toCsv } from '../../utils/csv';
 import { canApprove } from '../../types/local';
 import { toMin } from '../../utils/date';
 import { Filters } from './Filters';
@@ -20,12 +24,15 @@ export function VisitList() {
   const {
     dispatch, records, filter, retry, notify,
     stampStartAt, stampEndAt, approveVisit, approveAllToday, session, openRecord,
+    alerts, dismissAlert,
   } = useCareStore();
 
   const loading = dispatch.status === 'loading' || records.status === 'loading';
   const plan = dispatch.status === 'ready' ? dispatch.data : null;
   const recs = records.status === 'ready' ? records.data.records : [];
   const unreadable = records.status === 'ready' ? records.data.unreadable : [];
+  // 未送信（Phase 5b）。圏外で保存した記録はここに入り、送られると消える
+  const pendingIds = new Set(records.status === 'ready' ? records.data.pendingVisitIds : []);
 
   // legacy/index.html:1710。予定開始の昇順。未入力は 00:00 と同じ扱いで先頭に来る
   const sorted = [...(plan?.visits ?? [])].sort((a, b) => (toMin(a.startTime) ?? 0) - (toMin(b.startTime) ?? 0));
@@ -33,9 +40,45 @@ export function VisitList() {
     ? sorted
     : sorted.filter((v) => deriveStatus(v, recordOf(v.visitId, recs)) === filter);
 
-  const later = (name: string) => () => notify(`${name}はステップ6で実装します`);
+  const later = (name: string) => () => notify(`${name}は Phase 1c 以降で実装します`);
+
+  /*
+   * 日次の実施記録 CSV。legacy/index.html:1836-1847 の15列をそのまま写す。
+   *
+   * legacy は画面の絞り込みを無視してその日その職員の全件を出していたが、
+   * 「画面に出ている行がそのまま出る」ほうが誤解が無い（計画書 Q5）。
+   * 母集団は一覧が描いている visible そのものにしてある。
+   */
+  const exportCsv = () => {
+    // 「まだ読めていない」を「0件だった」と同じ文言で返すと、出力漏れに気づけない
+    if (loading) { notify('読み込み中です。少し待ってからもう一度お試しください。'); return; }
+    if (dispatch.status === 'error' || records.status === 'error') {
+      notify('記録を読み取れていないため出力できません。再試行してください。');
+      return;
+    }
+    if (plan === null || visible.length === 0) { notify('出力するデータがありません'); return; }
+    const head = ['日付', '職員', '利用者', 'サービス種別', '予定開始', '予定終了', '実績開始', '実績終了',
+      '実施分', '状態', '体温', '血圧', '脈拍', '実施内容', '特記事項'];
+    const body = visible.map((v) => {
+      const rec = recordOf(v.visitId, recs);
+      const resident = plan.residents.find((r) => r.residentId === v.residentId);
+      const min = minutesOf(rec);
+      return [
+        plan.date, plan.staffName, resident?.name ?? v.residentId, v.serviceName,
+        v.startTime, v.endTime, rec?.actualStart ?? '', rec?.actualEnd ?? '',
+        // legacy の日次だけ「実績が揃わなければ空欄」。0 と書くと未実施に見える
+        min || '', deriveStatus(v, rec),
+        rec?.vitals.temperature ?? '', rec?.vitals.bloodPressure ?? '', rec?.vitals.pulse ?? '',
+        (rec?.tasks ?? []).join('・'), rec?.note ?? '',
+      ];
+    });
+    downloadCsv(`実施記録_${plan.staffName}_${plan.date}.csv`, toCsv([head, ...body]));
+    notify('CSVを出力しました');
+  };
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   return (
+    <>
     <div className="panel">
       <div className="panel-head">
         <h2>サービス実施一覧</h2>
@@ -44,18 +87,45 @@ export function VisitList() {
         {/* legacy は .chipbtn.primary の青をインライン style で紫に上書きしている（:866） */}
         <button className="chipbtn primary" id="bulkBtn"
           style={{ background: 'linear-gradient(120deg,#6a4bd6,#2b7ee6)', boxShadow: '0 4px 12px rgba(90,70,210,.28)' }}
-          onClick={later('特記事項の一括作成')}>✨ 特記事項を一括作成</button>
+          onClick={() => setBulkOpen(true)}>✨ 特記事項を一括作成</button>
         {/* legacy/index.html:4240。承認権限のある職員にだけ出す */}
         {canApprove(session) && (
           <button className="chipbtn" id="approveAll" onClick={() => { void approveAllToday(); }}>一括承認</button>
         )}
-        <button className="chipbtn" id="csvBtn" onClick={later('CSV出力')}>CSV出力</button>
+        <button className="chipbtn" id="csvBtn" onClick={exportCsv}>CSV出力</button>
         <button className="chipbtn primary" id="addBtn" onClick={later('予定の追加')}>＋ 予定を追加</button>
       </div>
 
       <Filters />
 
       <div className="rows" id="rows">
+        {/*
+          送信できなかった記録と、圏外の保存が成立しない端末であることの知らせ（Phase 5b）。
+          **職員が読んで消すまで残す。** 3秒で消えるトーストに出すと、
+          端末をポケットに入れている間に消え、記録が消えたことが伝わらない。
+          .warnbox は legacy の既存クラス（styles.css:291）で、CSS は足していない。
+        */}
+        {/*
+          この一覧がキャッシュから返っているときの断り（1b）。
+          **閉じられるようにしない。** 圏外である間ずっと成り立つ事実で、
+          閉じられると「古いかもしれない」という前提だけが消える。
+          電波が戻って読み直せば、この行は自然に消える。
+        */}
+        {records.status === 'ready' && records.data.fromCache && (
+          <div className="warnbox" style={{ marginBottom: 10 }}>
+            電波が届いていないため、この端末に残っている内容を表示しています。
+            ほかの職員があとから付けた記録は含まれていません。
+          </div>
+        )}
+
+        {alerts.map((message, i) => (
+          <div className="warnbox" style={{ marginBottom: 10 }} key={message}>
+            {message}
+            <button className="chipbtn" style={{ marginLeft: 10 }} type="button"
+              onClick={() => dismissAlert(i)}>閉じる</button>
+          </div>
+        ))}
+
         {loading && <div className="empty"><div className="ico">⏳</div><p>読み込んでいます…</p></div>}
 
         {dispatch.status === 'error' && (
@@ -91,6 +161,7 @@ export function VisitList() {
             visit={v}
             record={recordOf(v.visitId, recs)}
             resident={plan.residents.find((r) => r.residentId === v.residentId)}
+            pending={pendingIds.has(v.visitId)}
             onStart={() => { void stampStartAt(v.visitId); }}
             onEnd={() => { void stampEndAt(v.visitId); }}
             onApprove={() => { void approveVisit(v.visitId); }}
@@ -99,5 +170,8 @@ export function VisitList() {
         ))}
       </div>
     </div>
+    {/* legacy の #bulkMask（:989）。.mask は position:fixed なので置き場所は表示に影響しない */}
+    {bulkOpen && <BulkNoteModal onClose={() => setBulkOpen(false)} />}
+    </>
   );
 }

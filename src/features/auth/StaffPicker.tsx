@@ -29,7 +29,7 @@ function useGreeting(): { greet: string; date: string } {
 }
 
 export function StaffPicker() {
-  const { staff, signIn, retry } = useCareStore();
+  const { staff, signIn, retry, sessionRestoring } = useCareStore();
   const { greet, date } = useGreeting();
 
   // .login は display:none で、.on が付いたときだけ表示される（styles.css:537-546）。
@@ -62,22 +62,26 @@ export function StaffPicker() {
           <div className="lg-date" id="lgDate">{date}</div>
           <div className="lg-hr"></div>
 
-          {staff.status === 'loading' && <div className="lg-note">職員を読み込んでいます…</div>}
+          {/* 前回の職員選択を復元している間は、選び直しを促さない */}
+          {(sessionRestoring || staff.status === 'loading') && (
+            <div className="lg-note">職員を読み込んでいます…</div>
+          )}
 
-          {staff.status === 'error' && (
+          {!sessionRestoring && staff.status === 'error' && (
             <>
-              <div className="lg-err" style={{ display: 'block' }}>{staff.message}</div>
+              {/* .lg-err は .on が付いたときだけ表示される（styles.css:651-655） */}
+              <div className="lg-err on">{staff.message}</div>
               <button className="lg-btn" type="button" onClick={retry}>再試行</button>
             </>
           )}
 
-          {staff.status === 'ready' && staff.data.length === 0 && (
+          {!sessionRestoring && staff.status === 'ready' && staff.data.length === 0 && (
             <div className="lg-note">
               職員が登録されていません。事業所の管理者に登録を依頼してください。
             </div>
           )}
 
-          {staff.status === 'ready' && staff.data.length > 0 && staff.data.map((s) => (
+          {!sessionRestoring && staff.status === 'ready' && staff.data.length > 0 && staff.data.map((s) => (
             <button key={s.staffId} className="lg-btn" type="button" onClick={() => signIn(s.staffId)}>
               {s.name}（{s.role}）
             </button>

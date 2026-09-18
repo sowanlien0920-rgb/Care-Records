@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "default": "nursinglog"
+  },
+  "targets": {
+    "nursinglog": {
+      "hosting": {
+        "app": [
+          "carerecords"
+        ],
+        "legacy-url": [
+          "nursinglog"
+        ]
+      }
+    }
+  }
+}

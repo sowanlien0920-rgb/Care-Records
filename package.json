@@ -8,9 +8,13 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "emulators": "npx --yes firebase-tools emulators:start --only auth,firestore --project kpi-system-a718f --config firebase.emulators.json",
+    "seed": "tsx scripts/seedEmulator.ts",
+    "icons": "tsx scripts/renderIcons.ts"
   },
   "dependencies": {
+    "firebase": "^12.19.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "zod": "^4.6.1"
@@ -23,7 +27,9 @@
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+    "firebase-admin": "^14.4.0",
     "globals": "^17.5.0",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.1",
     "vite": "^8.0.10"

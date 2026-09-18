@@ -30,8 +30,13 @@ import { z } from 'zod';
  *
  * 上げる: 必須項目の追加 / 項目の削除・改名 / 型の変更 / 意味の変更
  * 上げない: 省略可能な項目の追加
+ *
+ * ── 版の履歴 ────────────────────────────────────────────
+ * 1: Phase 1a。配信と実施記録の初版
+ * 2: Phase 1b。VisitRecord に mood / memo を追加し、noteSource に 'template' を足した
+ * 3: Phase 4。DispatchVisit と VisitRecord に serviceCode を追加した
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 /**
  * YYYY-MM-DD。形だけでなく実在する日付かも見る。
@@ -62,6 +67,14 @@ export const timeSchema = z.string()
 export const optionalTimeSchema = z.union([z.literal(''), timeSchema]);
 
 /** 訪問介護のサービス区分。legacy/index.html:1640 の SERVICES と一致させる */
+/**
+ * サービス種別。4値に畳んだもの。
+ *
+ * kpi-react の SERVICE_MASTER は算定区分ごとに40以上のコードを持つ
+ * （身体介護01・夜 / 身体1生活2 / 障害・家事1.0 など）。それをこの4値へ
+ * 対応付けたうえで、元のコードは serviceCode に残す。
+ * 記載チェックや帳票はこの4値で判定し、算定区分の細かさは serviceCode で追う。
+ */
 export const serviceKindSchema = z.enum([
   '身体介護',
   '生活援助',
@@ -163,14 +176,33 @@ export const residentBriefSchema = z.object({
 /**
  * 配信される1件の訪問。
  *
- * visitId は kpi-react が採番する。現行の visitKey（`${routePlanId}#${rowId}`、
- * VisitRoutePage.jsx:781）をそのまま使うと doc ID に利用者氏名が入るため、
- * Phase 4 では採番に置き換える。
+ * visitId は kpi-react が採番する。形は次のとおり（`utils/dispatch.js`）。
+ *
+ *   予定由来  `${date}#${residentId}#${rowId}`
+ *   手動追加  `${date}#${visitKey}`（visitKey は `m_...` で氏名を含まない）
+ *
+ * **氏名を入れない。** 予定表の visitKey は `${routePlanId}#${rowId}` で、
+ * routePlanId が `年月_氏名` になっている。そのまま使うと配信と実施記録の
+ * doc ID に利用者氏名が載る。実施記録は完結の日から2年（自治体により5年）
+ * 保存する法定文書であり、doc ID は後から変えられない。
+ *
+ * 日付を含めるのは、visitKey に日付が無く、同じ利用者の別日が衝突するため。
  */
 export const dispatchVisitSchema = z.object({
   visitId: z.string().min(1),
   residentId: z.string().min(1),
   serviceName: serviceKindSchema,
+  /**
+   * kpi-react の算定コード。SERVICE_MASTER のキーそのもの（例: 身体介護01・夜）。
+   * serviceName はこれを4値へ畳んだ結果であり、畳む前の区分をここに残す。
+   *
+   * 配信してよいと判断した根拠。サービス種別と提供時間帯は訪問介護計画書に
+   * 載る情報であり、ヘルパーが「何をどの区分で提供するか」を知るのは正当である。
+   * 受給資格や請求金額そのものは配信しない。
+   *
+   * 対応するコードが無い場合は空文字（「値がないは空文字」の扱い）。
+   */
+  serviceCode: z.string(),
   startTime: timeSchema,
   endTime: timeSchema,
   /** 事業所名。kpi-react: routePlans.rows[].officeName */
@@ -215,6 +247,11 @@ export const vitalsSchema = z.object({
  *
  * Phase 5 では facilities/{facilityId}/visitRecords/{visitId} に置く。
  * ヘルパーは自分の staffId のものだけ読み書きできる。
+ *
+ * ── mood / memo は carerecords が書き、kpi-react は読まない ──
+ * どちらも訪問先でヘルパーが観察・記入するもので、kpi-react 側に対応する
+ * 項目が無い。Phase 4 でこのファイルを kpi-react へコピーしても、
+ * kpi-react からは参照しない。逆向き（kpi-react が書く）は起こらない。
  */
 export const visitRecordSchema = z.object({
   schemaVersion: z.number().int(),
@@ -224,6 +261,15 @@ export const visitRecordSchema = z.object({
   staffId: z.string().min(1),
   residentId: z.string().min(1),
   serviceName: serviceKindSchema,
+  /**
+   * 算定コード。配信の値を写す。
+   *
+   * 配信ドキュメントは日単位で作り直されうるため、記録側に持たないと
+   * 後から算定区分を追えなくなる。実施記録は完結の日から2年（自治体により
+   * 5年）保存する法定文書であり、staffName を ID とは別に残すのと同じ理由で、
+   * 記録単体で読める状態にしておく。
+   */
+  serviceCode: z.string(),
 
   /** 予定時刻。配信の値を写す。実績が予定枠を外れていないかの判定に使う */
   plannedStart: timeSchema,
@@ -238,9 +284,28 @@ export const visitRecordSchema = z.object({
   note: z.string(),
   /**
    * 特記事項をどう書いたか。legacy の noteSrc（一覧のアイコンが ✨ か 📝 かを決める）。
-   * AI 生成を Phase 1b で入れるまでは 'manual' か null になる。
+   *
+   * 'template' は定型文生成（domain/noteBuilder.ts）が組み立てたもの。legacy は
+   * AI 失敗時のフォールバックを 'fb' として別に持っていたが、フォールバックも
+   * 定型文であることに変わりはないため 'template' に寄せる。
+   * 運営指導では「AI が書いたか / 定型文が組み立てたか / 人が書いたか」の区別を
+   * 記録から読めることが求められうるので、この3値は畳まない。
    */
-  noteSource: z.enum(['ai', 'manual']).nullable(),
+  noteSource: z.enum(['ai', 'template', 'manual']).nullable(),
+
+  /**
+   * ご本人の様子。legacy の v.mood（:1861）。選択肢は domain/vocabulary.ts の MOOD_OPTIONS。
+   * 未選択は空文字で表す（note / vitals と同じ「値がないは空文字」の扱い）。
+   *
+   * 選択肢を enum で縛らないのは、事業所ごとに語を足しうるため。
+   * 値域の正は MOOD_OPTIONS 側に置き、契約は文字列として受ける。
+   */
+  mood: z.string(),
+  /**
+   * ヘルパーのメモ。legacy の v.memo（:1861）。特記事項そのものではなく、
+   * 定型文生成（domain/noteBuilder.ts）の入力になる下書きにあたる。
+   */
+  memo: z.string(),
   status: visitStatusSchema,
 
   /**

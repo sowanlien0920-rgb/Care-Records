@@ -28,10 +28,14 @@ src/
   types/      contract.ts  ← kpi-react との共有契約。変更は updating-contract スキルで
               local.ts     ← carerecords 固有の型
   data/       adapter.ts / localAdapter.ts / mock.ts   ← 永続化の境界
+  domain/     compliance.ts（記載チェック）/ noteBuilder.ts（定型文生成）/
+              aggregate.ts（帳票の集計・提供分数）/ visitStatus.ts / timeValidation.ts / vocabulary.ts
+              ← React に依存しない純粋関数だけを置く
   store/      CareStoreProvider.tsx / useCareStore.ts
+  hooks/      useSpeechInput.ts   ← React に依存する共有ロジック。domain には置けない
   features/   auth / shell / visitList / record / resident / approval / report / timeline / incident
   components/ 共通コンポーネント
-  utils/
+  utils/      date.ts / csv.ts
   styles.css  ← legacy から移した 729行。書き換えない
 legacy/       ← 移行元の単一HTML実装。突き合わせ用。削除しない
 画面キャプチャ/ ← 各画面のスクリーンショット。見た目の基準
@@ -95,3 +99,12 @@ secure context として扱われるため dev server で動作する。
 kpi-react（`../kpi-react`、`github.com/Taka1523/kpi-react`）と Firestore を共有する予定。
 予定表・ルート表から配信ドキュメントを受け取り、実施記録を返す。
 **kpi-react は読み取りのみ行い、変更しない。**
+
+**例外（2026-09-14 に依頼者が解除）。** Phase 3（ヘルパーアカウント基盤）の作業範囲に限り、
+kpi-react のソースを変更してよい。計画書は
+`../kpi-react/docs/plans/2026-09-14-helper-account-phase3.md`。
+Phase 4（配信ドキュメント生成）も同様に解除した（2026-09-14）。計画書は
+`../kpi-react/docs/plans/2026-09-14-dispatch-generation-phase4.md`。
+Phase 6（承認済み実施記録の取り込み）も解除した（2026-09-14）。計画書は
+`docs/plans/2026-09-14-carerecords-phase6-record-import.md`。
+この例外は Phase 3・4・6 の範囲に閉じる。それ以外は従来どおり読み取りのみ。

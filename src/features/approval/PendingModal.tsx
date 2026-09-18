@@ -19,8 +19,12 @@ import { Modal } from '../../components/Modal';
 import { useCareStore } from '../../store/useCareStore';
 import { canApprove } from '../../types/local';
 import { deriveStatus } from '../../domain/visitStatus';
+import { check, countNg } from '../../domain/compliance';
+import { minutesOf } from '../../domain/aggregate';
+import { downloadCsv, toCsv } from '../../utils/csv';
 import { iso } from '../../utils/date';
 import type { VisitRow } from '../../data/adapter';
+import { StaleListNotice } from '../../components/StaleListNotice';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
@@ -37,16 +41,18 @@ function dowOf(s: string): string {
 }
 
 export function PendingModal() {
-  const { panel, closePanel, visitRows, staff, session, approveVisit, notify, openRecord, setDate, setStaffId } = useCareStore();
+  const { panel, closePanel, visitRows, staff, session, approveVisit, notify, openRecord, setDate, setStaffId, retry } = useCareStore();
   const [range, setRange] = useState('0');
   const [staffFilter, setStaffFilter] = useState('__all');
   const [kind, setKind] = useState('done');
   const [order, setOrder] = useState('old');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** 承認中。確認文面が長くなったぶん、二度押しで承認が重なりやすい */
+  const [busy, setBusy] = useState(false);
 
   if (panel !== 'pending') return null;
 
-  const all = visitRows.status === 'ready' ? visitRows.data : [];
+  const all = visitRows.status === 'ready' ? visitRows.data.rows : [];
   const accounts = staff.status === 'ready' ? staff.data : [];
 
   // legacy/index.html:3462。完了とキャンセルを除いたものが母集団
@@ -74,7 +80,27 @@ export function PendingModal() {
   const noNote = list.filter((r) => !(r.record?.note ?? '').trim()).length;
   const old7 = list.filter((r) => dayDiff(r.date) >= 7).length;
 
-  const selectable = list.filter((r) => deriveStatus(r.visit, r.record) === '済');
+  /*
+   * 記載チェックの要修正件数。legacy/index.html:3492 / :3504 / :3554 / :3577 が
+   * 同じ式を使う。数えるのは「済」の記録の指摘の**件数**で、記録の数ではない。
+   * 特記事項が空の記録は判定が warn 1件で打ち切られるため、ここでは 0 件になる
+   * （legacy と同じ。`compliance.ts` のコメントを参照）
+   */
+  const ngOf = (r: VisitRow): number => (deriveStatus(r.visit, r.record) === '済' && r.record !== undefined
+    ? countNg(check(r.record, r.resident?.carePlan))
+    : 0);
+  const ngTotal = list.reduce((a, r) => a + ngOf(r), 0);
+
+  /*
+   * 未送信の記録は選べない（Phase 5b）。
+   *
+   * この端末にしか無い記録に承認を付けても、届く先が無い。実施一覧の行では
+   * 承認ボタンを「送信待ち」にして塞いであり（`visitList/VisitRow.tsx`）、
+   * ここだけ承認できると画面によって可否が変わることになる。
+   * legacy の「実績未入力の行はチェックできない」と同じ扱いにする。
+   */
+  const selectable = list.filter((r) => deriveStatus(r.visit, r.record) === '済' && !r.pending);
+  const pendingCount = list.filter((r) => deriveStatus(r.visit, r.record) === '済' && r.pending).length;
   const toggle = (id: string) => setSelected((s) => {
     const n = new Set(s);
     if (n.has(id)) n.delete(id); else n.add(id);
@@ -82,18 +108,58 @@ export function PendingModal() {
   });
 
   async function approveSelected() {
+    if (busy) return;
     const targets = selectable.filter((r) => selected.has(r.visit.visitId));
     if (targets.length === 0) { notify('承認する記録を選択してください'); return; }
     const noNoteN = targets.filter((r) => !(r.record?.note ?? '').trim()).length;
+    // legacy/index.html:3554-3558。件数の単位が違う（未記入は記録数、要修正は指摘の件数）
+    const ngN = targets.reduce((a, r) => a + ngOf(r), 0);
     let msg = `${targets.length}件を承認して「完了」にします。`;
     if (noNoteN) msg += `\n\n・特記事項が未記入：${noNoteN}件`;
-    if (noNoteN) msg += '\n\n内容を確認せずに承認すると、実地指導で指摘を受けるおそれがあります。';
+    if (ngN) msg += `\n・記載チェックの要修正：${ngN}件`;
+    if (noNoteN || ngN) msg += '\n\n内容を確認せずに承認すると、実地指導で指摘を受けるおそれがあります。';
     if (!window.confirm(`${msg}\n\n承認しますか？`)) return;
     if (!canApprove(session)) { notify('承認権限がありません。'); return; }
-    for (const t of targets) await approveVisit(t.visit.visitId);
+    setBusy(true);
+    let done = 0;
+    try {
+      for (const t of targets) {
+        if (await approveVisit(t.visit.visitId)) done += 1;
+      }
+    } finally {
+      setBusy(false);
+    }
     setSelected(new Set());
-    notify(`${targets.length}件を承認しました（承認者：${session.name}）`);
+    // 承認できた件数だけを伝える。件数を偽ると、承認されていない記録が
+    // 承認済みとして扱われ、請求前の確認をすり抜ける
+    notify(done === targets.length
+      ? `${done}件を承認しました（承認者：${session.name}）`
+      : `${done}件を承認しました。${targets.length - done}件は承認できませんでした。`);
   }
+
+  /*
+   * 未承認一覧の CSV。legacy/index.html:3574-3578 の12列をそのまま写す。
+   * 母集団は画面が描いている list そのもの（legacy も同じ）。
+   */
+  const exportCsv = () => {
+    // 未承認の記録は請求前の確認に使う。「まだ読めていない」を0件と言わない
+    if (visitRows.status === 'loading') { notify('読み込み中です。少し待ってからもう一度お試しください。'); return; }
+    if (visitRows.status === 'error') { notify('記録を読み取れていないため出力できません。再試行してください。'); return; }
+    if (list.length === 0) { notify('出力するデータがありません'); return; }
+    const head = ['サービス提供日', '曜日', '経過日数', '担当職員', '利用者', 'サービス種別',
+      '予定', '実績', '提供分', '状態', '特記事項', '要修正件数'];
+    const body = list.map((r) => [
+      r.date, dowOf(r.date), dayDiff(r.date), r.staffName,
+      r.resident?.name ?? r.visit.residentId, r.visit.serviceName,
+      `${r.visit.startTime}-${r.visit.endTime}`,
+      `${r.record?.actualStart ?? ''}-${r.record?.actualEnd ?? ''}`,
+      minutesOf(r.record), deriveStatus(r.visit, r.record), r.record?.note ?? '',
+      // legacy は「済」以外を空欄にする（0 ではない）。判定していないことを 0 と書かない
+      deriveStatus(r.visit, r.record) === '済' ? ngOf(r) : '',
+    ]);
+    downloadCsv(`未承認一覧_${iso(new Date())}.csv`, toCsv([head, ...body]));
+    notify('CSVを出力しました');
+  };
 
   const openFromRow = (r: VisitRow) => {
     // legacy/index.html:3545-3548。日付と職員を合わせてから記録を開く
@@ -113,8 +179,9 @@ export function PendingModal() {
         <>
           <span className="sumline">{selected.size}件を選択中</span>
           <div className="spacer"></div>
-          <button className="bt" onClick={() => notify('CSV出力は Phase 1b で実装します')}>CSV出力</button>
-          <button className="bt save" onClick={() => { void approveSelected(); }}>選択した記録を承認</button>
+          <button className="bt" onClick={exportCsv}>CSV出力</button>
+          <button className="bt save" disabled={busy} onClick={() => { void approveSelected(); }}>
+            {busy ? '承認中…' : '選択した記録を承認'}</button>
         </>
       }
     >
@@ -147,11 +214,23 @@ export function PendingModal() {
           <span className="k">特記事項が未記入<b>{noNote}件</b></span>
           <span className="k" style={old7 ? { background: '#fff8e8', borderColor: '#f2dfb4', color: '#8a6412' } : undefined}>
             7日以上経過<b>{old7}件</b></span>
+          {/* legacy/index.html:3498。0件でなければ .lv-ng と同じ色にする */}
+          <span className="k" style={ngTotal ? { background: '#fdecef', borderColor: '#f6c9d3', color: '#a3243c' } : undefined}>
+            記載チェック要修正<b>{ngTotal}件</b></span>
+          {/*
+            未送信は選べないので、その件数を出しておかないと
+            「承認待ちに出ているのにチェックできない」理由が分からない（Phase 5b）
+          */}
+          {pendingCount > 0 && (
+            <span className="k" style={{ background: '#fff8e8', borderColor: '#f2dfb4', color: '#8a6412' }}>
+              未送信（承認できません）<b>{pendingCount}件</b></span>
+          )}
         </div>
       </div>
 
       <div className="sec">
         <h3>対象一覧 <span className="bchip">{list.length}件</span></h3>
+        <StaleListNotice show={visitRows.status === 'ready' && visitRows.data.fromCache} />
         <div className="pend-head">
           <span><input type="checkbox" title="すべて選択"
             checked={selectable.length > 0 && selected.size === selectable.length}
@@ -159,7 +238,14 @@ export function PendingModal() {
           <span>サービス提供日</span><span>時間</span><span>利用者／サービス</span><span>担当職員</span><span>状態・チェック</span>
         </div>
         <div className="plist" style={{ maxHeight: 340 }}>
-          {list.length === 0
+          {visitRows.status === 'loading' && <div className="hempty">読み込んでいます…</div>}
+          {/* 取得の失敗を 0件として出すと、未承認が残っていても「ありません」と読める */}
+          {visitRows.status === 'error' && (
+            <div className="hempty">{visitRows.message}
+              <button className="chipbtn" style={{ marginLeft: 8 }} onClick={retry}>再試行</button>
+            </div>
+          )}
+          {visitRows.status === 'ready' && (list.length === 0
             ? <div className="hempty">条件に合う未承認の記録はありません</div>
             : list.map((r) => {
               const st = deriveStatus(r.visit, r.record);
@@ -171,9 +257,17 @@ export function PendingModal() {
                 // 直下は span 6個。ラッパーを挟むとグリッドが崩れる
                 <div className="pend-row" key={r.visit.visitId} onClick={() => openFromRow(r)}>
                   <span onClick={(e) => e.stopPropagation()}>
+                    {/*
+                      未送信も選べなくする（Phase 5b）。`selectable` から外しただけでは
+                      チェックが入り「1件を選択中」と出るのに、承認を押すと
+                      「承認する記録を選択してください」になる。選んで見えているものが
+                      選ばれていない状態になるため、入力の側で塞ぐ。
+                    */}
                     <input type="checkbox" checked={selected.has(r.visit.visitId)}
-                      disabled={st !== '済'}
-                      title={st !== '済' ? '実績時間が未入力のため承認できません' : undefined}
+                      disabled={st !== '済' || r.pending}
+                      title={st !== '済' ? '実績時間が未入力のため承認できません'
+                        : r.pending ? 'この端末にだけ保存されています。電波が戻ると送信され、承認できるようになります'
+                        : undefined}
                       onChange={() => toggle(r.visit.visitId)} />
                   </span>
                   <span className="dt">{r.date.replace(/-/g, '/')}（{dowOf(r.date)}）
@@ -186,11 +280,14 @@ export function PendingModal() {
                   <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                     <span className={`badge ${st === '済' ? 'b-reg' : 'b-wait'}`}
                       style={{ minWidth: 46, fontSize: 11.5, padding: '4px 8px' }}>{st}</span>
-                    {!(r.record?.note ?? '').trim() && <span className="bchip">特記なし</span>}
+                    {/* legacy/index.html:3504-3505。要修正が出ていれば「特記なし」は出さない */}
+                    {ngOf(r) > 0
+                      ? <span className="bchip ng">要修正{ngOf(r)}</span>
+                      : !(r.record?.note ?? '').trim() && <span className="bchip">特記なし</span>}
                   </span>
                 </div>
               );
-            })}
+            }))}
         </div>
       </div>
     </Modal>

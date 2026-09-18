@@ -33,11 +33,18 @@ function badgeClass(s: VisitStatus): string {
 }
 
 export function VisitRow({
-  visit, record, resident, onStart, onEnd, onApprove, onEdit,
+  visit, record, resident, pending, onStart, onEnd, onApprove, onEdit,
 }: {
   visit: DispatchVisit;
   record: VisitRecord | undefined;
   resident: ResidentBrief | undefined;
+  /**
+   * 記録がまだ端末から送られていない（Phase 5b）。
+   *
+   * 圏外で保存すると立つ。サ責の端末には届いていないので、
+   * **この行は承認に回らない。** 承認ボタンの代わりに「送信待ち」を出す。
+   */
+  pending: boolean;
   onStart: () => void;
   onEnd: () => void;
   onApprove: () => void;
@@ -54,12 +61,26 @@ export function VisitRow({
   const dur = hasActual ? ae - as : (pe ?? 0) - (ps ?? 0);
   const tasks = tasksOf(record, resident);
 
-  // legacy/index.html:1761-1764。承認は「済」のときだけ。記録は常に出る
+  /*
+   * legacy/index.html:1761-1764。承認は「済」のときだけ。記録は常に出る。
+   *
+   * Phase 5b で1つ足した。**未送信の記録には承認ボタンを出さない。**
+   * 押せてしまうと、この端末の中だけで承認が付き、サ責には届いていないのに
+   * 「完了」に見える記録ができる。押せない理由が分かるよう「送信待ち」を出す。
+   */
   const actual = record?.actualStart ?? '';
   const actualEnd = record?.actualEnd ?? '';
   const lead =
     status === '未完' && !actual ? <button className="mini go" data-go={visit.visitId} onClick={onStart}>開始</button>
     : status === '未完' && actual && !actualEnd ? <button className="mini stop" data-stop={visit.visitId} onClick={onEnd}>終了</button>
+    : status === '済' && pending
+      /*
+       * **button にしない。** `.mini` は背景と文字色を指定しているため
+       * ブラウザ既定の disabled のグレーアウトが効かず、`.mini:hover` は
+       * disabled でも発火する（styles.css:186-190）。押せるのに押せない
+       * ボタンに見え、タッチ端末では title も出ない。
+       */
+      ? <span className="bchip" title="この端末にだけ保存されています。電波が戻ると送信され、承認できるようになります">送信待ち</span>
     : status === '済' ? <button className="mini ok" data-ok={visit.visitId} onClick={onApprove}>承認</button>
     : null;
 
@@ -86,13 +107,24 @@ export function VisitRow({
       <div className="who">
         <div className="name">{resident?.name ?? visit.residentId}<span className="sama">様</span></div>
         <div className="meta">
+          {/*
+            未送信の印（Phase 5b）。件数バッジを出さない決定（計画書 U-b）のため、
+            **職員が気づける場所はここだけ**になる。介助内容と同じ灰色の .tag に
+            すると `掃除` `+2` の列に埋もれ、しかも末尾に回るので、
+            legacy の赤系チップ（.bchip.ng、styles.css:386）を先頭に置く。
+            どちらも既存クラスで、styles.css は触っていない（鉄則2）。
+          */}
+          {pending && (
+            <span className="bchip ng" title="この端末にだけ保存されています。電波が戻ると送信されます">未送信</span>
+          )}
           <span className="tag svc">{visit.serviceName}</span>
           {/* legacy/index.html:1775-1776。先頭3件のみ表示し、残りは +N に畳む */}
           {tasks.slice(0, 3).map((t) => <span className="tag" key={t}>{t}</span>)}
           {tasks.length > 3 && <span className="tag">+{tasks.length - 3}</span>}
         </div>
         {record?.note
-          ? <div className="note">{record.noteSource === 'ai' ? '✨' : '📝'} {record.note}</div>
+          // 'template'（定型文で作成）も生成物なので ✨ 側。人が書いたものだけ 📝 になる
+          ? <div className="note">{record.noteSource === 'ai' || record.noteSource === 'template' ? '✨' : '📝'} {record.note}</div>
           : null}
       </div>
 

@@ -4,6 +4,24 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>訪問介護 サービス実施記録</title>
+
+<!--
+  ホーム画面に追加するための宣言（Phase 5b）。
+  **Service Worker は入れていない。** 圏外でアプリを新規に起動することはできず、
+  オフラインで効くのは「開いたまま圏外に入った」場合だけになる。
+  この範囲は 2026-09-14 に依頼者と確認済み
+  （docs/plans/2026-09-14-carerecords-phase5b-pwa-offline.md の U-d）。
+-->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1f6fe0">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- iOS はホーム画面からの起動でしか manifest の display を見ない。
+     apple- 付きは Safari が今も見るが Chrome が非推奨を警告するため、両方置く -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="実施記録">
 </head>
 <body>
 <div id="root"></div>

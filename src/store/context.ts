@@ -3,12 +3,12 @@
  * Provider コンポーネントと同じファイルに置くと Fast Refresh が効かなくなるため分けている。
  */
 import { createContext } from 'react';
-import type { AdapterError, BadgeCounts, RecordListing, VisitRow } from '../data/adapter';
+import type { AdapterError, BadgeCounts, RecordListing, VisitRowListing } from '../data/adapter';
 import type { Dispatch, VisitRecord, VisitStatus } from '../types/contract';
 import type { Incident, RecordPrefs, StaffAccount } from '../types/local';
 
 /** ツールバーから開く画面の種類 */
-export type PanelKind = 'todo' | 'pending' | 'report' | 'timeline' | 'incident';
+export type PanelKind = 'todo' | 'pending' | 'report' | 'timeline' | 'incident' | 'password';
 
 /**
  * 非同期の4状態を型で表す。
@@ -21,6 +21,16 @@ export type Async<T> =
   | { status: 'error'; message: string; kind: AdapterError['kind'] }
   | { status: 'ready'; data: T };
 
+/**
+ * 記録のうち、1項目だけを差し替えてよいフィールド。
+ *
+ * VisitRecord 全体を Partial で受けると、呼び出し側から visitId / schemaVersion /
+ * approvedBy まで書き換えられる。承認は「誰がいつ承認したか」を残す法定要件のある
+ * 操作なので、approveVisit を通さずに承認欄が書き換わる経路は作らない。
+ * 対象を増やすときは、その項目を承認とは独立に上書きしてよいかを確かめる。
+ */
+export type RecordFieldPatch = Partial<Pick<VisitRecord, 'note' | 'noteSource' | 'mood' | 'memo'>>;
+
 export interface CareStore {
   // ── 画面状態 ──────────────────────────────────────────
   date: string;
@@ -31,6 +41,38 @@ export interface CareStore {
    * Phase 5 で Firebase Auth に置き換わる。
    */
   session: StaffAccount | null;
+  /**
+   * 保存済みの職員選択を復元している最中か。
+   * true の間は「未ログイン」と判定しない（職員選択が一瞬見えるのを防ぐ）。
+   */
+  sessionRestoring: boolean;
+  /**
+   * セッションを復元できなかった理由。復元できたときは null。
+   *
+   * `users/{uid}` 未作成・形式違反・ルールで拒否は、いずれも職員本人には
+   * 直せない。ログイン画面に出さないと「パスワードを間違えた」としか見えず、
+   * 同じ操作を繰り返すことになる（`docs/security/2026-09-14-audit.md`）。
+   */
+  sessionError: string | null;
+  /**
+   * 送信できなかった書き込みと、この端末で圏外の保存が成立しないこと（Phase 5b）。
+   *
+   * **トーストでは足りない。** 圏外での保存は端末に入った時点で返るため、
+   * 権限拒否などはその何秒も後に返り、そのとき Firestore は
+   * ローカルの書き込みを巻き戻す。3秒で消える通知に出すと、
+   * 端末をポケットに入れている間に消え、**記録が消えたことが誰にも伝わらない**。
+   * 職員が読んで消すまで残す必要がある。
+   */
+  alerts: string[];
+  dismissAlert: (index: number) => void;
+  /**
+   * 初期パスワードのままログインしたか。true の間は `PasswordModal` が
+   * 強制モードで開き、変更するまで閉じられない（legacy の `mustChange`、
+   * `index.html:4201`）。発行時の初期値は全アカウント共通のため、
+   * 変えないまま使わせない導線がここにしか無い。
+   */
+  passwordChangeRequired: boolean;
+  setPasswordChangeRequired: (required: boolean) => void;
   signIn: (staffId: string) => void;
   signOut: () => void;
 
@@ -71,13 +113,24 @@ export interface CareStore {
   records: Async<RecordListing>;
   /** ツールバーのバッジ件数 */
   badges: Async<BadgeCounts>;
-  /** 日付・職員をまたぐ訪問と記録の一覧。未承認一覧・未完了・帳票・経過記録が使う */
-  visitRows: Async<VisitRow[]>;
+  /**
+   * 日付・職員をまたぐ訪問と記録の一覧。未承認一覧・未完了・帳票・経過記録が使う。
+   * `records` と同じく、行と「キャッシュ由来か」を一組で返す。
+   */
+  visitRows: Async<VisitRowListing>;
 
   // ── 操作 ──────────────────────────────────────────────
   saveRecord: (record: VisitRecord) => Promise<boolean>;
   /** 実施記録を削除する。配信（予定）は消えない */
   deleteRecord: (visitId: string) => Promise<boolean>;
+  /**
+   * 記録の一部だけを書き換える。記録がまだ無ければ配信から作る。
+   * 未完了一覧の様子・メモのように、記録全体を組み立てずに1項目だけ保存する経路が使う。
+   *
+   * 戻り値は「保存できたか」。失敗の通知はここで出すので、
+   * 呼び出し側は結果を見てから成功を伝える。
+   */
+  updateRecordFields: (visitId: string, patch: RecordFieldPatch) => Promise<boolean>;
   /** 記録支援設定の読み書き。法定文書系は kpi-react が正なのでここには含めない */
   getPrefs: (residentId: string) => Promise<RecordPrefs>;
   savePrefs: (residentId: string, prefs: RecordPrefs) => Promise<boolean>;
@@ -98,8 +151,11 @@ export interface CareStore {
   stampStartAt: (visitId: string) => Promise<void>;
   /** 終了を打刻する。状態が「済」になる */
   stampEndAt: (visitId: string) => Promise<void>;
-  /** 承認して「完了」にする。承認者を記録に残す（法定要件） */
-  approveVisit: (visitId: string) => Promise<void>;
+  /**
+   * 承認して「完了」にする。承認者を記録に残す（法定要件）。
+   * 戻り値は「保存できたか」。呼び出し側は結果を見てから通知する。
+   */
+  approveVisit: (visitId: string) => Promise<boolean>;
   /** その日の「済」をまとめて承認する。絞り込みの影響を受けない */
   approveAllToday: () => Promise<void>;
   /** 失敗した取得をやり直す。error 表示から利用者が次の行動を取れるようにする */
